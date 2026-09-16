@@ -253,6 +253,50 @@ def test_forged_footer_hiding_extra_chunk_raises(tmp_path: Path) -> None:
         decrypt_file(enc, tmp_path / "dec.bin", "pw")
 
 
+# --- output_path=None: derive the name from authenticated metadata --------------
+
+
+def test_none_output_path_uses_metadata_name(tmp_path: Path) -> None:
+    src = tmp_path / "report.pdf"
+    src.write_bytes(b"pdf-like content")
+    enc = tmp_path / "out.thex"
+    encrypt_file(src, enc, "pw", argon2_params=CHEAP)
+    src.unlink()  # remove the original so the auto-derived path is free
+
+    metadata = decrypt_file(enc, None, "pw")
+
+    recovered = tmp_path / "report.pdf"
+    assert recovered.read_bytes() == b"pdf-like content"
+    assert metadata.original_name == "report.pdf"
+
+
+def test_none_output_path_refuses_to_overwrite(tmp_path: Path) -> None:
+    src = tmp_path / "report.pdf"
+    src.write_bytes(b"new content")
+    enc = tmp_path / "out.thex"
+    encrypt_file(src, enc, "pw", argon2_params=CHEAP)
+
+    existing = tmp_path / "report.pdf"
+    # Overwrite the source with something else to prove it survives untouched.
+    existing.write_bytes(b"pre-existing content, must survive")
+
+    with pytest.raises(FileExistsError):
+        decrypt_file(enc, None, "pw")
+    assert existing.read_bytes() == b"pre-existing content, must survive"
+
+
+def test_explicit_output_path_still_overwrites(tmp_path: Path) -> None:
+    src = tmp_path / "in.bin"
+    src.write_bytes(b"content")
+    enc = tmp_path / "out.thex"
+    dec = tmp_path / "dec.bin"
+    dec.write_bytes(b"stale")
+    encrypt_file(src, enc, "pw", argon2_params=CHEAP)
+
+    decrypt_file(enc, dec, "pw")  # explicit path -> overwrite allowed
+    assert dec.read_bytes() == b"content"
+
+
 def test_forged_footer_claiming_more_chunks_than_present_raises(tmp_path: Path) -> None:
     src = tmp_path / "in.bin"
     src.write_bytes(os.urandom(24))

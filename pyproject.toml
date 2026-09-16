@@ -20,6 +20,7 @@ dependencies = [
 gui = ["PySide6>=6.7"]
 dev = [
     "pytest>=8.0",
+    "pytest-timeout>=2.3",
     "hypothesis>=6.100",
     "ruff>=0.6",
     "mypy>=1.11",
@@ -43,6 +44,12 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
+[tool.ruff.lint.per-file-ignores]
+# typer's documented API requires calling Argument()/Option() as parameter
+# defaults - that's the framework's pattern, not the mutable-default
+# anti-pattern B008 is meant to catch.
+"app/cli.py" = ["B008"]
+
 [tool.mypy]
 python_version = "3.12"
 warn_return_any = true
@@ -58,3 +65,7 @@ disallow_untyped_defs = false
 testpaths = ["tests"]
 addopts = "-q"
 pythonpath = ["."]
+# A global safety net: no single test should ever legitimately take this
+# long. A hang (e.g. a prompt waiting on real stdin) fails loudly with a
+# traceback instead of stalling the whole suite indefinitely.
+timeout = 30
