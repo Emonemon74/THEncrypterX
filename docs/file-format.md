@@ -98,16 +98,19 @@ own associated data.
 | 4 | `chunk_ct_len` (u32) |
 | `chunk_ct_len` | `chunk_ciphertext_and_tag` |
 
-**Nonce, by algorithm:**
+**Nonce, by algorithm** (always stored inline in the chunk's nonce field,
+regardless of algorithm — the field exists in the framing either way, so there
+is no space saved by omitting it):
 - `aead_id = 1` (XChaCha20-Poly1305, 24-byte nonce): a fresh `os.urandom(24)`
-  per chunk, stored inline as shown above. Safe because the nonce space is
-  large enough that random collisions are negligible even across an
-  enormous number of chunks.
-- `aead_id = 2` (AES-256-GCM, 12-byte nonce): **not** safe to pick at random
-  past ~2³² messages. Instead, a 4-byte random prefix is generated once per
-  file (stored once, in the first chunk's nonce field, or as a dedicated
-  field — see the chunking module for the exact placement) and
-  `nonce_i = prefix || uint64_LE(i)` is derived, never stored per-chunk.
+  per chunk. Safe because the nonce space is large enough that random
+  collisions are negligible even across an enormous number of chunks.
+- `aead_id = 2` (AES-256-GCM, 12-byte nonce): random 96-bit nonces are **not**
+  safe past ~2³² messages under one key, so chunks use
+  `nonce_i = file_prefix (4 random bytes, generated once per file) || uint64_LE(i)`,
+  guaranteeing uniqueness by construction. The metadata section (§6) is a
+  single message under `meta_key` and always uses a plain random nonce,
+  independent of this — the counter construction is only needed where many
+  messages share one key, which is only true of the chunk stream.
 
 **Associated data per chunk:**
 
