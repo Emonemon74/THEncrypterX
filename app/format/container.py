@@ -21,7 +21,7 @@ import io
 import struct
 from typing import BinaryIO
 
-from app.core.errors import FormatError
+from app.core.errors import FormatError, TruncatedFileError
 from app.crypto.cipher import nonce_size, open_, seal, tag_size
 from app.format._io import read_exact
 from app.format.constants import FOOTER_LEN, MAGIC_END, SECTION_LEN_FIELD_SIZE
@@ -104,7 +104,7 @@ def read_footer_at_end(stream: BinaryIO) -> tuple[int, int]:
     end = stream.tell()
     footer_offset = end - FOOTER_LEN
     if footer_offset < 0:
-        raise FormatError("file too short to contain a footer")
+        raise TruncatedFileError("file too short to contain a footer")
 
     stream.seek(footer_offset)
     magic_end, total_chunks = _FOOTER_STRUCT.unpack(read_exact(stream, FOOTER_LEN))
