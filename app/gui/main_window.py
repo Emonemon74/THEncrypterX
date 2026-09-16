@@ -1,12 +1,11 @@
 """THEncrypterX desktop GUI (PySide6).
 
-This window wires user actions (Encrypt/Decrypt button clicks) directly to
-app.core.service jobs and runs them on the GUI thread. That is a deliberate,
-temporary shortcut: it blocks the whole window for the duration of the
-operation, which is invisible for a tiny test file and unacceptable for a
-multi-gigabyte one. app.gui.workers (next) moves this onto a background
-QThread with live progress and a working Cancel button - see its module
-docstring for the fix and why it's needed.
+Encrypt/Decrypt button clicks start a background app.gui.workers
+EncryptWorker/DecryptWorker (a QThread) instead of running the job on the
+GUI thread, so the window stays responsive on large files and the Cancel
+button can actually interrupt a running job. This window never touches
+app.files or app.crypto directly - it only starts a worker and reacts to
+its Qt signals (progress, finished_ok, failed, cancelled).
 """
 
 from __future__ import annotations
@@ -31,9 +30,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.core.errors import ThexError
-from app.core.progress import Progress
-from app.core.service import DecryptJob, EncryptJob
+from app.gui.workers import DecryptWorker, EncryptWorker
+from app.metadata.metadata import FileMetadata
 
 
 class DropArea(QLabel):
@@ -72,6 +70,7 @@ class MainWindow(QMainWindow):
 
         self._selected_file: Path | None = None
         self._output_path: Path | None = None
+        self._worker: EncryptWorker | DecryptWorker | None = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -124,10 +123,9 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("Ready.")
         layout.addWidget(self.status_label)
 
-        # Cancellation is meaningful once work runs on a background thread
-        # (app.gui.workers) - wired there, not here.
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self._on_cancel_clicked)
         layout.addWidget(self.cancel_button)
 
     # --- file / output selection --------------------------------------------
@@ -170,9 +168,38 @@ class MainWindow(QMainWindow):
     def _set_busy(self, busy: bool) -> None:
         for widget in (self.encrypt_button, self.decrypt_button, self.select_button):
             widget.setEnabled(not busy)
+        self.cancel_button.setEnabled(busy)
+        self.cancel_button.setText("Cancel")
 
-    def _on_progress(self, progress: Progress) -> None:
-        self.progress_bar.setValue(int(progress.fraction * 100))
+    def _on_progress_fraction(self, fraction: float) -> None:
+        self.progress_bar.setValue(int(fraction * 100))
+
+    def _start_worker(self, worker: EncryptWorker | DecryptWorker) -> None:
+        self._worker = worker
+        worker.progress.connect(self._on_progress_fraction)
+        worker.failed.connect(self._on_job_failed)
+        worker.cancelled.connect(self._on_job_cancelled)
+        self._set_busy(True)
+        worker.start()
+
+    def _finish_job(self) -> None:
+        self._set_busy(False)
+        self._worker = None
+
+    def _on_job_failed(self, message: str) -> None:
+        self._finish_job()
+        self._show_error(message)
+
+    def _on_job_cancelled(self) -> None:
+        self._finish_job()
+        self.status_label.setText("Cancelled.")
+
+    def _on_cancel_clicked(self) -> None:
+        if self._worker is not None:
+            self._worker.cancel()
+            self.cancel_button.setEnabled(False)
+            self.cancel_button.setText("Cancelling...")
+            self.status_label.setText("Cancelling...")
 
     def _on_encrypt_clicked(self) -> None:
         src = self._require_file()
@@ -184,16 +211,14 @@ class MainWindow(QMainWindow):
             return
         output = self._output_path or src.with_name(src.name + ".thex")
 
-        self._set_busy(True)
         self.status_label.setText("Encrypting...")
-        try:
-            EncryptJob(src, output, password).run(on_progress=self._on_progress)
-        except ThexError as exc:
-            self._show_error(str(exc))
-        else:
-            self.status_label.setText(f"Encrypted -> {output}")
-        finally:
-            self._set_busy(False)
+        worker = EncryptWorker(src, output, password)
+        worker.finished_ok.connect(self._on_encrypt_finished)
+        self._start_worker(worker)
+
+    def _on_encrypt_finished(self, output_path: str) -> None:
+        self._finish_job()
+        self.status_label.setText(f"Encrypted -> {output_path}")
 
     def _on_decrypt_clicked(self) -> None:
         src = self._require_file()
@@ -204,18 +229,14 @@ class MainWindow(QMainWindow):
             self._show_error("Enter a password.")
             return
 
-        self._set_busy(True)
         self.status_label.setText("Decrypting...")
-        try:
-            metadata = DecryptJob(src, self._output_path, password).run(
-                on_progress=self._on_progress
-            )
-        except (ThexError, FileExistsError) as exc:
-            self._show_error(str(exc))
-        else:
-            self.status_label.setText(f"Decrypted -> {metadata.original_name}")
-        finally:
-            self._set_busy(False)
+        worker = DecryptWorker(src, self._output_path, password)
+        worker.finished_ok.connect(self._on_decrypt_finished)
+        self._start_worker(worker)
+
+    def _on_decrypt_finished(self, metadata: FileMetadata) -> None:
+        self._finish_job()
+        self.status_label.setText(f"Decrypted -> {metadata.original_name}")
 
 
 def run() -> None:

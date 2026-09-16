@@ -7,6 +7,7 @@ via the `no_blocking_dialogs` fixture.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,13 @@ def _mime_with_file(path: Path) -> QMimeData:
     mime = QMimeData()
     mime.setUrls([QUrl.fromLocalFile(str(path))])
     return mime
+
+
+def _wait_for_job(qtbot: QtBot, window: mw.MainWindow, timeout: int = 5000) -> None:
+    """Jobs run on a background QThread now - wait for it to finish (or fail
+    or be cancelled) rather than asserting immediately after a click.
+    """
+    qtbot.waitUntil(lambda: window._worker is None, timeout=timeout)
 
 
 def test_window_title(qtbot: QtBot) -> None:
@@ -134,11 +142,13 @@ def test_encrypt_then_decrypt_roundtrip_via_buttons(qtbot: QtBot, tmp_path: Path
     encrypt_window.password_edit.setText("pw")
 
     qtbot.mouseClick(encrypt_window.encrypt_button, mw.Qt.MouseButton.LeftButton)
+    _wait_for_job(qtbot, encrypt_window)
 
     enc_path = tmp_path / "secret.txt.thex"
     assert enc_path.exists()
     assert "Encrypted" in encrypt_window.status_label.text()
     assert encrypt_window.progress_bar.value() == 100
+    assert not encrypt_window.cancel_button.isEnabled()
     src.unlink()  # so decrypt's default output path is free
 
     decrypt_window = mw.MainWindow()
@@ -147,6 +157,7 @@ def test_encrypt_then_decrypt_roundtrip_via_buttons(qtbot: QtBot, tmp_path: Path
     decrypt_window.password_edit.setText("pw")
 
     qtbot.mouseClick(decrypt_window.decrypt_button, mw.Qt.MouseButton.LeftButton)
+    _wait_for_job(qtbot, decrypt_window)
 
     assert "Decrypted" in decrypt_window.status_label.text()
     assert src.read_bytes() == b"gui roundtrip content"
@@ -161,6 +172,7 @@ def test_decrypt_wrong_password_shows_error(qtbot: QtBot, tmp_path: Path) -> Non
     encrypt_window._set_selected_file(src)
     encrypt_window.password_edit.setText("right-pw")
     qtbot.mouseClick(encrypt_window.encrypt_button, mw.Qt.MouseButton.LeftButton)
+    _wait_for_job(qtbot, encrypt_window)
 
     decrypt_window = mw.MainWindow()
     qtbot.addWidget(decrypt_window)
@@ -168,6 +180,7 @@ def test_decrypt_wrong_password_shows_error(qtbot: QtBot, tmp_path: Path) -> Non
     decrypt_window.password_edit.setText("wrong-pw")
 
     qtbot.mouseClick(decrypt_window.decrypt_button, mw.Qt.MouseButton.LeftButton)
+    _wait_for_job(qtbot, decrypt_window)
 
     assert "Error" in decrypt_window.status_label.text()
 
@@ -184,5 +197,51 @@ def test_explicit_output_path_used(qtbot: QtBot, tmp_path: Path) -> None:
     window._output_path = custom_out
 
     qtbot.mouseClick(window.encrypt_button, mw.Qt.MouseButton.LeftButton)
+    _wait_for_job(qtbot, window)
 
     assert custom_out.exists()
+
+
+def test_cancel_button_disabled_when_idle(qtbot: QtBot) -> None:
+    window = mw.MainWindow()
+    qtbot.addWidget(window)
+    assert not window.cancel_button.isEnabled()
+
+
+def test_encrypt_click_starts_a_worker_synchronously(qtbot: QtBot, tmp_path: Path) -> None:
+    # worker.start() launches the OS thread asynchronously, but _start_worker
+    # assigns window._worker and enables Cancel *before* calling start() - so
+    # this must be true immediately, regardless of how fast the job itself is.
+    src = tmp_path / "in.bin"
+    src.write_bytes(b"data")
+    window = mw.MainWindow()
+    qtbot.addWidget(window)
+    window._set_selected_file(src)
+    window.password_edit.setText("pw")
+
+    qtbot.mouseClick(window.encrypt_button, mw.Qt.MouseButton.LeftButton)
+
+    assert window._worker is not None
+    _wait_for_job(qtbot, window)
+
+
+def test_cancel_stops_the_job_and_leaves_no_output(qtbot: QtBot, tmp_path: Path) -> None:
+    src = tmp_path / "in.bin"
+    src.write_bytes(os.urandom(2_000_000))
+    out = tmp_path / "out.thex"
+
+    window = mw.MainWindow()
+    qtbot.addWidget(window)
+
+    # A tiny chunk_size (many chunks) keeps this running long enough to
+    # reliably cancel before it finishes on its own - the click path always
+    # uses the default chunk size, so the worker is started directly here.
+    worker = mw.EncryptWorker(src, out, "pw", chunk_size=16)
+    worker.finished_ok.connect(window._on_encrypt_finished)
+    window._start_worker(worker)
+
+    qtbot.mouseClick(window.cancel_button, mw.Qt.MouseButton.LeftButton)
+    _wait_for_job(qtbot, window)
+
+    assert "Cancelled" in window.status_label.text()
+    assert not out.exists()
