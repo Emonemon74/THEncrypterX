@@ -1,0 +1,19 @@
+{
+  "description": "THEncrypterX v1 known-answer test vector - see docs/file-format.md sec 10",
+  "password": "correct horse battery staple",
+  "argon2": {
+    "memory_cost_kib": 8,
+    "time_cost": 1,
+    "parallelism": 1
+  },
+  "salt_hex": "000102030405060708090a0b0c0d0e0f",
+  "aead_id": 1,
+  "chunk_size": 16,
+  "metadata_original_name": "kat.txt",
+  "metadata_nonce_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7",
+  "chunk_nonces_hex": [
+    "b0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7"
+  ],
+  "plaintext_hex": "68656c6c6f2c20776f726c6421",
+  "expected_thex_hex": "54485831010001010d1010000000000008000000010000000113020000000102030405060708090a0b0c0d0e0fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b76d00000057ecad7eb7323ceabff33105abbe2c691eee5c428de822c041fd2ccc7232282ca7cb6958ee2ef22484aae800a507306bcbea476b92796b021b9083e860aa268de8d7d6260ea058c34300796cea414efeda81c0948cc57f64165409b563fe93fc796b5ef5eb0d22684657084d6cb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c71d000000d058f62f7466ac5790626b9db9f463b47afc7112d47aaf0f5ff68f15cb544858450100000000000000"
+}
