@@ -45,8 +45,19 @@ def _mime_with_file(path: Path) -> QMimeData:
 def _wait_for_job(qtbot: QtBot, window: mw.MainWindow, timeout: int = 5000) -> None:
     """Jobs run on a background QThread now - wait for it to finish (or fail
     or be cancelled) rather than asserting immediately after a click.
+
+    Also explicitly joins the worker's OS thread (QThread.wait()) once its
+    finished/failed/cancelled signal has fired, instead of just letting the
+    Python object go out of scope. By the time the signal is emitted, run()
+    is essentially done, so this returns almost immediately - it exists so
+    no test leaves a not-quite-joined thread lingering into the next one,
+    which is standard Qt practice (see QThread's own docs) and one less
+    variable when a test is slow on an unfamiliar CI machine.
     """
+    worker = window._worker
     qtbot.waitUntil(lambda: window._worker is None, timeout=timeout)
+    if worker is not None:
+        worker.wait(2000)
 
 
 def test_window_title(qtbot: QtBot) -> None:

@@ -38,4 +38,7 @@ jobs:
       - run: ruff check app tests scripts benchmarks
       - run: ruff format --check app tests scripts benchmarks
       - run: mypy app
-      - run: pytest
+      # -vv (overriding the repo's default -q): if a test ever times out or
+      # crashes here, we want the last test name that ran, not just a bare
+      # exit code - a bare "-q" run gives no way to tell which test it was.
+      - run: pytest -vv

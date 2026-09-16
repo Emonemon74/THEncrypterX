@@ -68,5 +68,10 @@ addopts = "-q"
 pythonpath = ["."]
 # A global safety net: no single test should ever legitimately take this
 # long. A hang (e.g. a prompt waiting on real stdin) fails loudly with a
-# traceback instead of stalling the whole suite indefinitely.
-timeout = 30
+# traceback instead of stalling the whole suite indefinitely. 60s (not 30s)
+# because Windows CI runners have noticeably slower file I/O/process
+# overhead than a local dev machine, and pytest-timeout's Windows fallback
+# ("thread" method - Windows has no SIGALRM) kills the process outright via
+# os._exit() on expiry, which prints no traceback at all - a too-tight
+# budget there looks exactly like an unexplained crash instead of a timeout.
+timeout = 60
