@@ -20,6 +20,7 @@ from typing import BinaryIO
 from app.core.errors import FormatError, UnsupportedAlgorithmError, UnsupportedVersionError
 from app.crypto.cipher import is_supported
 from app.crypto.kdf import SALT_LEN, Argon2Params
+from app.format._io import read_exact as _read_exact
 from app.format.constants import (
     ARGON2ID_PARAMS_LEN,
     FIXED_HEADER_LEN,
@@ -158,11 +159,3 @@ class Header:
             )
         except ValueError as exc:
             raise FormatError(str(exc)) from exc
-
-
-def _read_exact(stream: BinaryIO, n: int) -> bytes:
-    """Read exactly n bytes or raise FormatError. Never allocates more than n."""
-    data = stream.read(n)
-    if len(data) != n:
-        raise FormatError(f"unexpected end of stream while reading {n} bytes")
-    return data

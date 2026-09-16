@@ -29,3 +29,10 @@ MIN_CHUNK_SIZE = 1
 
 # Footer: magic_end(4) + total_chunks(u64) = 12
 FOOTER_LEN = 12
+
+# Section length-prefix field width (u32) and a generous cap for the
+# metadata section specifically - a filename/size/timestamp fits in a few
+# hundred bytes; this just bounds how much a corrupt length field could make
+# us try to read/allocate before failing.
+SECTION_LEN_FIELD_SIZE = 4
+MAX_METADATA_CT_LEN = 64 * 1024  # 64 KiB
