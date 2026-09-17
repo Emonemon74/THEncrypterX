@@ -7,6 +7,7 @@ input precedence, exit codes, and output framing, not cryptography itself
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,24 @@ def test_encrypt_explicit_output_path(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert out.exists()
+
+
+def test_encrypt_and_decrypt_with_explicit_workers(tmp_path: Path) -> None:
+    src = tmp_path / "doc.txt"
+    src.write_bytes(os.urandom(20_000))
+    out = tmp_path / "custom.thex"
+
+    result = runner.invoke(
+        app, ["encrypt", str(src), "-o", str(out), "--workers", "4"], input="pw\npw\n"
+    )
+    assert result.exit_code == 0, result.output
+
+    dec_out = tmp_path / "restored.bin"
+    result = runner.invoke(
+        app, ["decrypt", str(out), "-o", str(dec_out), "--workers", "4"], input="pw\n"
+    )
+    assert result.exit_code == 0, result.output
+    assert dec_out.read_bytes() == src.read_bytes()
 
 
 def test_encrypt_password_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -8,12 +8,21 @@ import os
 import pytest
 
 from app.core.errors import AuthenticationError, FormatError
-from app.crypto.cipher import ALGO_AES_256_GCM, ALGO_XCHACHA20_POLY1305, key_size, nonce_size
+from app.crypto.cipher import (
+    ALGO_AES_256_GCM,
+    ALGO_XCHACHA20_POLY1305,
+    key_size,
+    nonce_size,
+    open_,
+    seal,
+)
 from app.format.container import (
     chunk_associated_data,
     read_footer_at_end,
+    read_raw_frame,
     read_sealed_section,
     write_footer,
+    write_raw_frame,
     write_sealed_section,
 )
 
@@ -109,6 +118,53 @@ def test_sealed_section_length_shorter_than_tag_rejected() -> None:
     blob = nonce + (5).to_bytes(4, "little") + b"short"
     with pytest.raises(FormatError, match="shorter than the auth tag"):
         read_sealed_section(io.BytesIO(blob), algo, key, b"AD", max_ciphertext_len=1024)
+
+
+# --- raw frame (seal/read split for the parallel-worker pipeline) ------------
+
+
+@pytest.mark.parametrize("algo", ALGOS)
+def test_raw_frame_roundtrip_via_manual_seal_open(algo: int) -> None:
+    key = os.urandom(key_size(algo))
+    nonce = os.urandom(nonce_size(algo))
+    ciphertext = seal(algo, key, nonce, b"hello, raw frame", b"AD")
+
+    stream = io.BytesIO()
+    write_raw_frame(stream, nonce, ciphertext)
+
+    stream.seek(0)
+    read_nonce, read_ct = read_raw_frame(stream, algo, max_ciphertext_len=1024)
+    assert read_nonce == nonce
+    assert read_ct == ciphertext
+    assert open_(algo, key, read_nonce, read_ct, b"AD") == b"hello, raw frame"
+
+
+def test_write_raw_frame_matches_write_sealed_section_layout() -> None:
+    # write_sealed_section should just be seal() + write_raw_frame() - lock
+    # that in so the two never silently diverge in on-disk shape.
+    algo = ALGO_XCHACHA20_POLY1305
+    key = os.urandom(key_size(algo))
+    nonce = os.urandom(nonce_size(algo))
+
+    via_sealed_section = io.BytesIO()
+    write_sealed_section(via_sealed_section, algo, key, nonce, b"data", b"AD")
+
+    via_raw = io.BytesIO()
+    ciphertext = seal(algo, key, nonce, b"data", b"AD")
+    write_raw_frame(via_raw, nonce, ciphertext)
+
+    assert via_sealed_section.getvalue() == via_raw.getvalue()
+
+
+def test_read_raw_frame_enforces_same_length_limits_as_read_sealed_section() -> None:
+    algo = ALGO_XCHACHA20_POLY1305
+    key = os.urandom(key_size(algo))
+    nonce = os.urandom(nonce_size(algo))
+    stream = io.BytesIO()
+    write_sealed_section(stream, algo, key, nonce, b"x" * 100, b"AD")
+    stream.seek(0)
+    with pytest.raises(FormatError, match="exceeds"):
+        read_raw_frame(stream, algo, max_ciphertext_len=8)
 
 
 # --- chunk associated data ---------------------------------------------------

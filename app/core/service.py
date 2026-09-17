@@ -18,7 +18,7 @@ from app.core.progress import CancellationToken, Progress, ProgressCallback
 from app.crypto.cipher import ALGO_XCHACHA20_POLY1305
 from app.crypto.kdf import Argon2Params
 from app.files.decrypt import decrypt_file
-from app.files.encrypt import DEFAULT_CHUNK_SIZE, encrypt_file
+from app.files.encrypt import DEFAULT_CHUNK_SIZE, DEFAULT_WORKERS, encrypt_file
 from app.format.container import read_footer_at_end
 from app.format.header import Header
 from app.metadata.metadata import FileMetadata
@@ -50,6 +50,7 @@ class EncryptJob:
     aead_id: int = ALGO_XCHACHA20_POLY1305
     chunk_size: int = DEFAULT_CHUNK_SIZE
     argon2_params: Argon2Params | None = None
+    workers: int = DEFAULT_WORKERS
 
     def run(
         self,
@@ -65,6 +66,7 @@ class EncryptJob:
             chunk_size=self.chunk_size,
             argon2_params=self.argon2_params,
             progress_cb=_bridge(on_progress, cancel_token),
+            workers=self.workers,
         )
 
 
@@ -75,6 +77,7 @@ class DecryptJob:
     input_path: str | os.PathLike[str]
     output_path: str | os.PathLike[str] | None
     password: str
+    workers: int = DEFAULT_WORKERS
 
     def run(
         self,
@@ -87,6 +90,7 @@ class DecryptJob:
             self.output_path,
             self.password,
             progress_cb=_bridge(on_progress, cancel_token),
+            workers=self.workers,
         )
 
 

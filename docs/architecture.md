@@ -104,6 +104,42 @@ call *and* every chunk's AEAD call - tampering with any header field breaks
 authentication everywhere downstream. See `docs/file-format.md` for the exact
 byte layout and `docs/threat-model.md` for what each defense catches.
 
+## Parallel chunk workers (`workers > 1`)
+
+```text
+main thread                          ThreadPoolExecutor (workers=N)
+    │
+    │  read chunk i, submit seal(i) ────► worker: seal(chunk_i)  (GIL released - runs on its own core)
+    │  read chunk i+1, submit seal(i+1) ─► worker: seal(chunk_i+1) (concurrent with the above)
+    │  ...
+    │  pop oldest future, write it     ◄── FIFO window, size = workers * 2
+    │  (blocks here only if the oldest isn't done yet)
+```
+
+`app/files/encrypt.py::_encrypt_chunks_parallel` and
+`app/files/decrypt.py::_decrypt_chunks_parallel` submit each chunk's
+`seal()`/`open_()` call to a `ThreadPoolExecutor` instead of calling it
+inline. This works because both AEAD backends (PyNaCl/libsodium,
+`cryptography`/OpenSSL) release the GIL for the duration of their C-level
+work, so multiple chunks genuinely compute on different cores at once -
+confirmed by measurement (README §Benchmarks: ~4x throughput at 8 workers
+on an 8-core machine), not just assumed from "the docs say AEAD releases
+the GIL."
+
+Reading/writing stays on the calling thread and in strict file order - a
+frame's length is only known after reading its length prefix, so I/O can't
+be parallelized the same way, and chunks must land in the file in index
+order regardless of which one's *computation* finishes first (the pool
+makes no ordering guarantee). A fixed-size FIFO window (`workers * 2`
+in-flight chunks) reconciles the two: work is submitted in order, but only
+drained - written, or checked for a raised `AuthenticationError` - from the
+front of the window, once that specific chunk is done, however long its
+neighbors take. This bounds memory the same way `iter_chunks`'s read-ahead
+does, just widened to fit the pool. The container produced is ordinary and
+worker-count-agnostic: a file encrypted with `workers=8` decrypts correctly
+with `workers=1` and vice versa, since nothing about the on-disk format
+depends on how many threads produced or consume it.
+
 ## Threading model (GUI only)
 
 ```text

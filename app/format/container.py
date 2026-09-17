@@ -35,6 +35,19 @@ _CHUNK_AD_TAG = b"CHUNK"
 _CHUNK_AD_STRUCT = struct.Struct("<QB")  # index (u64) + is_final (u8)
 
 
+def write_raw_frame(stream: BinaryIO, nonce: bytes, ciphertext: bytes) -> None:
+    """Write an already-sealed `nonce || u32 len || ciphertext+tag` frame.
+
+    Split out from `write_sealed_section` so a caller that has already
+    called `seal()` itself - e.g. on a worker thread, for parallel chunk
+    encryption (see app.files.encrypt._encrypt_chunks_parallel) - doesn't
+    have to seal twice or duplicate the framing.
+    """
+    stream.write(nonce)
+    stream.write(_LEN_STRUCT.pack(len(ciphertext)))
+    stream.write(ciphertext)
+
+
 def write_sealed_section(
     stream: BinaryIO,
     algo: int,
@@ -45,9 +58,31 @@ def write_sealed_section(
 ) -> None:
     """Seal `plaintext` and write `nonce || u32 len || ciphertext+tag`."""
     ciphertext = seal(algo, key, nonce, plaintext, associated_data)
-    stream.write(nonce)
-    stream.write(_LEN_STRUCT.pack(len(ciphertext)))
-    stream.write(ciphertext)
+    write_raw_frame(stream, nonce, ciphertext)
+
+
+def read_raw_frame(stream: BinaryIO, algo: int, max_ciphertext_len: int) -> tuple[bytes, bytes]:
+    """Read one `nonce || u32 len || ciphertext+tag` frame; return (nonce, ciphertext).
+
+    Split out from `read_sealed_section` so a caller can hand the
+    (still-sealed) ciphertext to a worker thread for `open_()` - e.g. for
+    parallel chunk decryption (see app.files.decrypt._decrypt_chunks_parallel)
+    - while the read itself (necessarily sequential: frame boundaries are
+    only known after reading each length prefix) stays on the calling
+    thread. Length is validated *before* the ciphertext is read, so a
+    forged length field can only ever fail fast, never trigger an oversized
+    read.
+    """
+    nonce = read_exact(stream, nonce_size(algo))
+    (ct_len,) = _LEN_STRUCT.unpack(read_exact(stream, SECTION_LEN_FIELD_SIZE))
+
+    if ct_len < tag_size(algo):
+        raise FormatError(f"section length {ct_len} shorter than the auth tag")
+    if ct_len > max_ciphertext_len:
+        raise FormatError(f"section length {ct_len} exceeds the {max_ciphertext_len} limit")
+
+    ciphertext = read_exact(stream, ct_len)
+    return nonce, ciphertext
 
 
 def read_sealed_section(
@@ -61,18 +96,9 @@ def read_sealed_section(
 
     Raises FormatError for structural problems (bad length, truncation) and
     AuthenticationError (via app.crypto.cipher.open_) if the tag doesn't
-    verify. Length is validated *before* the ciphertext is read, so a forged
-    length field can only ever fail fast, never trigger an oversized read.
+    verify.
     """
-    nonce = read_exact(stream, nonce_size(algo))
-    (ct_len,) = _LEN_STRUCT.unpack(read_exact(stream, SECTION_LEN_FIELD_SIZE))
-
-    if ct_len < tag_size(algo):
-        raise FormatError(f"section length {ct_len} shorter than the auth tag")
-    if ct_len > max_ciphertext_len:
-        raise FormatError(f"section length {ct_len} exceeds the {max_ciphertext_len} limit")
-
-    ciphertext = read_exact(stream, ct_len)
+    nonce, ciphertext = read_raw_frame(stream, algo, max_ciphertext_len)
     return open_(algo, key, nonce, ciphertext, associated_data)
 
 

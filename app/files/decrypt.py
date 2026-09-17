@@ -6,12 +6,20 @@ authentication, and a chunk-count sanity check all happen *before*
 `app.files.stream.atomic_writer`, which only publishes the output if every
 chunk in the file authenticates. A failure at any point leaves `output_path`
 exactly as it was - never a partial or corrupted file.
+
+`workers > 1` parallelizes the per-chunk `open_()` calls across threads
+(_decrypt_chunks_parallel), mirroring app.files.encrypt's parallel path -
+see its module docstring for why threads genuinely help here (both AEAD
+backends release the GIL during their C-level work).
 """
 
 from __future__ import annotations
 
 import os
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
+from typing import BinaryIO
 
 from app.core.errors import (
     AuthenticationError,
@@ -20,15 +28,106 @@ from app.core.errors import (
     TruncatedFileError,
     WrongPasswordError,
 )
-from app.crypto.cipher import nonce_size, tag_size
+from app.crypto.cipher import nonce_size, open_, tag_size
 from app.crypto.kdf import derive_master_key
 from app.crypto.keys import derive_subkeys
-from app.files.encrypt import ProgressCallback
+from app.files.encrypt import DEFAULT_WORKERS, ProgressCallback
 from app.files.stream import atomic_writer
 from app.format.constants import MAX_METADATA_CT_LEN, SECTION_LEN_FIELD_SIZE
-from app.format.container import chunk_associated_data, read_footer_at_end, read_sealed_section
+from app.format.container import (
+    chunk_associated_data,
+    read_footer_at_end,
+    read_raw_frame,
+    read_sealed_section,
+)
 from app.format.header import Header
 from app.metadata.metadata import FileMetadata, deserialize
+
+
+def _decrypt_chunks_sequential(
+    inp: BinaryIO,
+    out: BinaryIO,
+    aead_id: int,
+    data_key: bytes,
+    ad_header: bytes,
+    total_chunks: int,
+    max_chunk_ct_len: int,
+    progress_cb: ProgressCallback | None,
+    total_size: int,
+) -> None:
+    bytes_done = 0
+    for index in range(total_chunks):
+        is_final = index == total_chunks - 1
+        chunk_ad = chunk_associated_data(ad_header, index, is_final)
+        try:
+            plaintext = read_sealed_section(
+                inp, aead_id, data_key, chunk_ad, max_ciphertext_len=max_chunk_ct_len
+            )
+        except AuthenticationError as exc:
+            raise IntegrityError(f"chunk {index} failed authentication") from exc
+
+        out.write(plaintext)
+        bytes_done += len(plaintext)
+        if progress_cb is not None:
+            progress_cb(bytes_done, total_size)
+
+
+def _decrypt_chunks_parallel(
+    inp: BinaryIO,
+    out: BinaryIO,
+    aead_id: int,
+    data_key: bytes,
+    ad_header: bytes,
+    total_chunks: int,
+    max_chunk_ct_len: int,
+    progress_cb: ProgressCallback | None,
+    total_size: int,
+    workers: int,
+) -> None:
+    """Same output as _decrypt_chunks_sequential, opening up to `workers`
+    chunks concurrently on a thread pool.
+
+    Reading each frame's bytes off disk stays strictly sequential on the
+    calling thread - a frame's length is only known after reading its
+    length prefix, so there is no way to read frame i+1 without having
+    already read frame i - but that read is cheap I/O, not the bottleneck.
+    The CPU-bound open_() call for each frame is handed to the pool as soon
+    as its bytes are in hand, so reading frame i+1 can proceed while frame
+    i is still being authenticated on another core. Plaintext is written in
+    the same FIFO-window order as app.files.encrypt._encrypt_chunks_parallel,
+    for the same reason: file order must not depend on which chunk's
+    computation happens to finish first.
+    """
+    window: deque[tuple[int, Future[bytes]]] = deque()
+    max_window = max(1, workers * 2)
+    bytes_done = 0
+
+    def _drain_one() -> None:
+        nonlocal bytes_done
+        index, future = window.popleft()
+        try:
+            plaintext = future.result()
+        except AuthenticationError as exc:
+            raise IntegrityError(f"chunk {index} failed authentication") from exc
+        out.write(plaintext)
+        bytes_done += len(plaintext)
+        if progress_cb is not None:
+            progress_cb(bytes_done, total_size)
+
+    executor = ThreadPoolExecutor(max_workers=workers)
+    try:
+        for index in range(total_chunks):
+            is_final = index == total_chunks - 1
+            chunk_ad = chunk_associated_data(ad_header, index, is_final)
+            nonce, ciphertext = read_raw_frame(inp, aead_id, max_chunk_ct_len)
+            future = executor.submit(open_, aead_id, data_key, nonce, ciphertext, chunk_ad)
+            window.append((index, future))
+            if len(window) >= max_window:
+                _drain_one()
+        while window:
+            _drain_one()
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
 
 
 def decrypt_file(
@@ -37,6 +136,7 @@ def decrypt_file(
     password: str,
     *,
     progress_cb: ProgressCallback | None = None,
+    workers: int = DEFAULT_WORKERS,
 ) -> FileMetadata:
     """Decrypt `input_path` (a .thex container) into `output_path`.
 
@@ -46,6 +146,11 @@ def decrypt_file(
     app.files.encrypt's semantics), this auto-derived path refuses to
     overwrite an existing file: raises FileExistsError rather than silently
     clobbering something the caller didn't explicitly name.
+
+    `workers`: number of chunks to authenticate/decrypt concurrently
+    (default 1). Independent of how many workers were used to *encrypt* the
+    file - any value can decrypt a container produced with any other, since
+    chunk order in the file never depends on it.
 
     Returns the authenticated FileMetadata (original filename/size/mtime) on
     success. Raises WrongPasswordError, IntegrityError, TruncatedFileError,
@@ -101,27 +206,33 @@ def decrypt_file(
 
         inp.seek(chunks_start)
         max_chunk_ct_len = header.chunk_size + tag_len
-        bytes_done = 0
 
         with atomic_writer(resolved_output) as out:
-            for index in range(total_chunks):
-                is_final = index == total_chunks - 1
-                chunk_ad = chunk_associated_data(ad_header, index, is_final)
-                try:
-                    plaintext = read_sealed_section(
-                        inp,
-                        header.aead_id,
-                        subkeys.data_key,
-                        chunk_ad,
-                        max_ciphertext_len=max_chunk_ct_len,
-                    )
-                except AuthenticationError as exc:
-                    raise IntegrityError(f"chunk {index} failed authentication") from exc
-
-                out.write(plaintext)
-                bytes_done += len(plaintext)
-                if progress_cb is not None:
-                    progress_cb(bytes_done, metadata.original_size)
+            if workers <= 1:
+                _decrypt_chunks_sequential(
+                    inp,
+                    out,
+                    header.aead_id,
+                    subkeys.data_key,
+                    ad_header,
+                    total_chunks,
+                    max_chunk_ct_len,
+                    progress_cb,
+                    metadata.original_size,
+                )
+            else:
+                _decrypt_chunks_parallel(
+                    inp,
+                    out,
+                    header.aead_id,
+                    subkeys.data_key,
+                    ad_header,
+                    total_chunks,
+                    max_chunk_ct_len,
+                    progress_cb,
+                    metadata.original_size,
+                    workers,
+                )
 
             if inp.tell() != footer_offset:
                 raise FormatError("leftover or missing bytes between the last chunk and the footer")

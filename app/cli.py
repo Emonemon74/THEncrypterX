@@ -48,6 +48,11 @@ EXIT_FORMAT_ERROR = 3
 EXIT_CANCELLED = 4
 
 _AEAD_NAMES = {"xchacha20": ALGO_XCHACHA20_POLY1305, "aes256gcm": ALGO_AES_256_GCM}
+# The CLI (unlike the encrypt_file/decrypt_file default of 1) parallelizes by
+# default, since a real user running this from a terminal on a real file is
+# exactly who benefits from it - override with --workers 1 for the original
+# single-threaded behaviour.
+_DEFAULT_CLI_WORKERS = os.cpu_count() or 1
 _AEAD_LABELS = {v: k for k, v in _AEAD_NAMES.items()}
 
 
@@ -105,6 +110,15 @@ def encrypt(
     chunk_size: int = typer.Option(
         DEFAULT_CHUNK_SIZE, "--chunk-size", help="Plaintext bytes per chunk."
     ),
+    workers: int = typer.Option(
+        _DEFAULT_CLI_WORKERS,
+        "--workers",
+        min=1,
+        help="Chunks to encrypt concurrently (default: CPU count). Both AEAD "
+        "backends release the GIL during the actual crypto, so this genuinely "
+        "parallelizes - most useful for XChaCha20-Poly1305, which runs in "
+        "software. Pass 1 for the original single-threaded behaviour.",
+    ),
     password_file: Path | None = typer.Option(
         None, "--password-file", help="Read the password from this file's first line."
     ),
@@ -134,6 +148,7 @@ def encrypt(
                 aead_id=_AEAD_NAMES[aead],
                 chunk_size=chunk_size,
                 progress_cb=on_progress,
+                workers=workers,
             )
     except KeyboardInterrupt:
         err_console.print("[yellow]Cancelled.[/yellow]")
@@ -150,6 +165,13 @@ def decrypt(
     input_file: Path = typer.Argument(..., exists=True, readable=True, help="A .thex file."),
     output: Path | None = typer.Option(
         None, "-o", "--output", help="Output path (default: original filename, next to input)."
+    ),
+    workers: int = typer.Option(
+        _DEFAULT_CLI_WORKERS,
+        "--workers",
+        min=1,
+        help="Chunks to decrypt concurrently (default: CPU count). Works "
+        "regardless of how many workers the file was encrypted with.",
     ),
     password_file: Path | None = typer.Option(
         None, "--password-file", help="Read the password from this file's first line."
@@ -169,7 +191,9 @@ def decrypt(
                     started["value"] = True
                 progress.update(task, completed=done)
 
-            metadata = decrypt_file(input_file, output, password, progress_cb=on_progress)
+            metadata = decrypt_file(
+                input_file, output, password, progress_cb=on_progress, workers=workers
+            )
     except KeyboardInterrupt:
         err_console.print("[yellow]Cancelled.[/yellow]")
         raise typer.Exit(code=EXIT_CANCELLED) from None
