@@ -99,6 +99,8 @@ corrupt/unsupported container, `4` cancelled.
 python main.py
 ```
 
+![THEncrypterX GUI](docs/images/gui_screenshot.png)
+
 Drag a file in (or click "Select File"), type a password, click Encrypt or
 Decrypt. Large files run on a background thread - the window stays
 responsive, and Cancel actually stops the job.
