@@ -17,6 +17,8 @@ import os
 from dataclasses import dataclass
 
 from argon2.low_level import ARGON2_VERSION, Type, hash_secret_raw
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 # Argon2 "type" byte as stored in the .thex header (see docs/file-format.md).
 ARGON2_TYPE_ID = 2
@@ -106,3 +108,36 @@ def derive_master_key(password: str, salt: bytes, params: Argon2Params) -> bytes
         type=Type.ID,
         version=params.argon2_version,
     )
+
+
+def derive_master_key_from_keyfile(raw_key: bytes, salt: bytes) -> bytes:
+    """Derive the 32-byte master key from key-file material and a salt.
+
+    Unlike `derive_master_key`, this is HKDF-Extract-and-Expand, not
+    Argon2id: `raw_key` is already uniformly random (see
+    app/crypto/keyfile.py), so memory-hard stretching would only slow down
+    every legitimate use for no security benefit - Argon2id exists to slow
+    down *guessing* a low-entropy secret, and a random 32-byte key isn't
+    guessable at all.
+
+    Folding in `salt` (unlike app.crypto.keys.derive_subkeys's HKDF-Expand,
+    which works directly on an already-uniform master key with no salt)
+    matters here specifically: it means two files encrypted with the *same*
+    key file still get different master keys, and therefore different
+    data_key/meta_key. That's not just defense in depth - it's what keeps
+    AES-256-GCM's per-file 32-bit nonce prefix (app.files.encrypt's
+    aes_gcm_prefix) collision-safe across many files sharing one key file,
+    the same way Argon2id's per-file salt does for passwords. See
+    docs/threat-model.md.
+    """
+    if len(raw_key) != KEY_LEN:
+        raise ValueError(f"raw_key must be exactly {KEY_LEN} bytes, got {len(raw_key)}")
+    if len(salt) != SALT_LEN:
+        raise ValueError(f"salt must be exactly {SALT_LEN} bytes, got {len(salt)}")
+
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=KEY_LEN,
+        salt=salt,
+        info=b"THEncrypterX v1 keyfile master key",
+    ).derive(raw_key)

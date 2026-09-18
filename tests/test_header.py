@@ -14,7 +14,7 @@ import pytest
 from app.core.errors import FormatError, UnsupportedAlgorithmError, UnsupportedVersionError
 from app.crypto.cipher import ALGO_AES_256_GCM, ALGO_XCHACHA20_POLY1305
 from app.crypto.kdf import Argon2Params
-from app.format.constants import FIXED_HEADER_LEN
+from app.format.constants import FIXED_HEADER_LEN, KDF_ID_KEYFILE
 from app.format.header import Header
 
 PARAMS = Argon2Params(memory_cost_kib=8, time_cost=1, parallelism=1)
@@ -55,6 +55,55 @@ def test_trailing_bytes_after_header_are_not_consumed() -> None:
     parsed = Header.read_from(stream)
     assert parsed == h
     assert stream.read() == b"REST-OF-FILE"
+
+
+# --- kdf_id=KDF_ID_KEYFILE (roadmap Phase 6: key-file support) ---------------
+
+
+def make_keyfile_header(aead_id: int = ALGO_XCHACHA20_POLY1305, chunk_size: int = 1024) -> Header:
+    return Header(
+        aead_id=aead_id, chunk_size=chunk_size, argon2_params=None, salt=SALT, kdf_id=KDF_ID_KEYFILE
+    )
+
+
+def test_keyfile_header_requires_no_argon2_params_block() -> None:
+    h = make_keyfile_header()
+    # No 13-byte Argon2 params block at all for this kdf - just fixed header + salt.
+    assert len(h.pack()) == FIXED_HEADER_LEN + 16
+
+
+def test_keyfile_header_roundtrip_via_stream() -> None:
+    h = make_keyfile_header(chunk_size=2_097_152)
+    parsed = Header.read_from(io.BytesIO(h.pack()))
+    assert parsed == h
+    assert parsed.argon2_params is None
+    assert parsed.kdf_id == KDF_ID_KEYFILE
+
+
+def test_argon2id_requires_argon2_params() -> None:
+    with pytest.raises(ValueError, match="argon2_params is required"):
+        Header(aead_id=ALGO_XCHACHA20_POLY1305, chunk_size=1024, argon2_params=None, salt=SALT)
+
+
+def test_keyfile_kdf_rejects_argon2_params() -> None:
+    with pytest.raises(ValueError, match="argon2_params must be None"):
+        Header(
+            aead_id=ALGO_XCHACHA20_POLY1305,
+            chunk_size=1024,
+            argon2_params=PARAMS,
+            salt=SALT,
+            kdf_id=KDF_ID_KEYFILE,
+        )
+
+
+def test_keyfile_header_with_nonzero_kdf_params_len_rejected() -> None:
+    """A key-file header claiming a non-empty KDF-params block is exactly
+    the kind of corrupted/malicious input the parser must reject during
+    header parsing, before any key derivation is attempted."""
+    blob = bytearray(make_keyfile_header().pack())
+    blob[8] = 13  # kdf_params_len - claims an Argon2id-sized block that isn't there
+    with pytest.raises(FormatError, match="kdf_params_len"):
+        Header.read_from(io.BytesIO(bytes(blob)))
 
 
 # --- corruption / fuzz-safety cases -----------------------------------------

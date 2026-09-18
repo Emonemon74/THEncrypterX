@@ -114,13 +114,21 @@ thencrypterx verify document.pdf.thex
 # Inspect a container's header - no password needed, nothing inside is read
 thencrypterx inspect document.pdf.thex
 
+# Key-file mode: an alternative to a password (see "Limitations and roadmap"
+# below for the risks - there is no way to recover a lost key file)
+thencrypterx keygen -o mykey.thexkey
+thencrypterx encrypt document.pdf --key-file mykey.thexkey
+thencrypterx decrypt document.pdf.thex --key-file mykey.thexkey
+
 # Best-effort overwrite + delete
 thencrypterx shred document.pdf --yes
 ```
 
 Password sourcing, in priority order: `THEX_PASSWORD` environment variable →
 `--password-file <path>` → interactive no-echo prompt. There is no
-`--password` flag on purpose - it would leak into shell history.
+`--password` flag on purpose - it would leak into shell history. `--key-file`
+is mutually exclusive with all of the above - see `docs/threat-model.md` for
+what a key file changes about the threat model versus a password.
 
 Exit codes: `0` success, `1` unexpected error, `2` wrong password, `3`
 corrupt/unsupported container, `4` cancelled.
@@ -201,6 +209,8 @@ an 8-core machine.
 - Secure deletion is best-effort only - not guaranteed on SSDs, CoW
   filesystems, or where backups/snapshots exist (see threat model)
 - No password-strength checking
+- Key-file mode has no recovery path if the key file is lost - see
+  `docs/threat-model.md` for what that changes versus a password
 - Parallel workers (`--workers`) only pipeline chunk-level AEAD calls, not
   the Argon2id key derivation itself (a fixed cost per operation) or disk
   I/O beyond the OS's own buffering

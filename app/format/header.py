@@ -26,6 +26,7 @@ from app.format.constants import (
     FIXED_HEADER_LEN,
     FORMAT_VERSION,
     KDF_ID_ARGON2ID,
+    KDF_ID_KEYFILE,
     MAGIC,
     MAX_CHUNK_SIZE,
     MIN_CHUNK_SIZE,
@@ -41,12 +42,17 @@ assert _ARGON2_PARAMS_STRUCT.size == ARGON2ID_PARAMS_LEN
 
 @dataclass(frozen=True, slots=True)
 class Header:
-    """A fully-validated .thex header."""
+    """A fully-validated .thex header.
+
+    `argon2_params` is required when `kdf_id == KDF_ID_ARGON2ID` and must be
+    None when `kdf_id == KDF_ID_KEYFILE` - a key-file-derived key needs no
+    KDF parameters at all (see app.crypto.kdf.derive_master_key_from_keyfile).
+    """
 
     aead_id: int
     chunk_size: int
-    argon2_params: Argon2Params
     salt: bytes
+    argon2_params: Argon2Params | None = None
     format_version: int = FORMAT_VERSION
     kdf_id: int = KDF_ID_ARGON2ID
 
@@ -55,32 +61,41 @@ class Header:
             raise ValueError(f"salt must be {SALT_LEN} bytes, got {len(self.salt)}")
         if not is_supported(self.aead_id):
             raise ValueError(f"unsupported aead_id {self.aead_id}")
-        if self.kdf_id != KDF_ID_ARGON2ID:
+        if self.kdf_id == KDF_ID_ARGON2ID:
+            if self.argon2_params is None:
+                raise ValueError("argon2_params is required for kdf_id=Argon2id")
+        elif self.kdf_id == KDF_ID_KEYFILE:
+            if self.argon2_params is not None:
+                raise ValueError("argon2_params must be None for kdf_id=key-file")
+        else:
             raise ValueError(f"unsupported kdf_id {self.kdf_id}")
         if not (MIN_CHUNK_SIZE <= self.chunk_size <= MAX_CHUNK_SIZE):
             raise ValueError(f"chunk_size {self.chunk_size} out of range")
 
     def pack(self) -> bytes:
         """Serialize to the exact on-disk byte layout."""
+        if self.argon2_params is not None:
+            params_bytes = _ARGON2_PARAMS_STRUCT.pack(
+                self.argon2_params.memory_cost_kib,
+                self.argon2_params.time_cost,
+                self.argon2_params.parallelism,
+                self.argon2_params.argon2_version,
+                self.argon2_params.argon2_type,
+                0,  # reserved
+            )
+        else:
+            params_bytes = b""
         fixed = _FIXED_STRUCT.pack(
             MAGIC,
             self.format_version,
             self.kdf_id,
             self.aead_id,
-            ARGON2ID_PARAMS_LEN,
+            len(params_bytes),
             len(self.salt),
             self.chunk_size,
             0,  # reserved
         )
-        params = _ARGON2_PARAMS_STRUCT.pack(
-            self.argon2_params.memory_cost_kib,
-            self.argon2_params.time_cost,
-            self.argon2_params.parallelism,
-            self.argon2_params.argon2_version,
-            self.argon2_params.argon2_type,
-            0,  # reserved
-        )
-        return fixed + params + self.salt
+        return fixed + params_bytes + self.salt
 
     @property
     def associated_data(self) -> bytes:
@@ -112,39 +127,45 @@ class Header:
             raise FormatError("reserved header field must be zero")
         if version != FORMAT_VERSION:
             raise UnsupportedVersionError(f"unsupported format_version {version}")
-        if kdf_id != KDF_ID_ARGON2ID:
+        if kdf_id not in (KDF_ID_ARGON2ID, KDF_ID_KEYFILE):
             raise UnsupportedAlgorithmError(f"unsupported kdf_id {kdf_id}")
         if not is_supported(aead_id):
             raise UnsupportedAlgorithmError(f"unsupported aead_id {aead_id}")
-        if kdf_params_len != ARGON2ID_PARAMS_LEN:
-            raise FormatError(f"unexpected kdf_params_len {kdf_params_len}")
         if salt_len != SALT_LEN:
             raise FormatError(f"unexpected salt_len {salt_len}")
         if not (MIN_CHUNK_SIZE <= chunk_size <= MAX_CHUNK_SIZE):
             raise FormatError(f"chunk_size {chunk_size} out of range")
 
-        params_bytes = _read_exact(stream, kdf_params_len)
-        (
-            memory_cost_kib,
-            time_cost,
-            parallelism,
-            argon2_version,
-            argon2_type,
-            params_reserved,
-        ) = _ARGON2_PARAMS_STRUCT.unpack(params_bytes)
-        if params_reserved != 0:
-            raise FormatError("reserved KDF-params field must be zero")
+        params: Argon2Params | None
+        if kdf_id == KDF_ID_ARGON2ID:
+            if kdf_params_len != ARGON2ID_PARAMS_LEN:
+                raise FormatError(f"unexpected kdf_params_len {kdf_params_len}")
+            params_bytes = _read_exact(stream, kdf_params_len)
+            (
+                memory_cost_kib,
+                time_cost,
+                parallelism,
+                argon2_version,
+                argon2_type,
+                params_reserved,
+            ) = _ARGON2_PARAMS_STRUCT.unpack(params_bytes)
+            if params_reserved != 0:
+                raise FormatError("reserved KDF-params field must be zero")
 
-        try:
-            params = Argon2Params(
-                memory_cost_kib=memory_cost_kib,
-                time_cost=time_cost,
-                parallelism=parallelism,
-                argon2_version=argon2_version,
-                argon2_type=argon2_type,
-            )
-        except ValueError as exc:
-            raise FormatError(f"invalid KDF params: {exc}") from exc
+            try:
+                params = Argon2Params(
+                    memory_cost_kib=memory_cost_kib,
+                    time_cost=time_cost,
+                    parallelism=parallelism,
+                    argon2_version=argon2_version,
+                    argon2_type=argon2_type,
+                )
+            except ValueError as exc:
+                raise FormatError(f"invalid KDF params: {exc}") from exc
+        else:
+            if kdf_params_len != 0:
+                raise FormatError(f"unexpected kdf_params_len {kdf_params_len} for a key-file kdf")
+            params = None
 
         salt = _read_exact(stream, salt_len)
 

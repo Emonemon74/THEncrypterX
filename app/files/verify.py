@@ -28,9 +28,12 @@ from app.core.errors import (
     WrongPasswordError,
 )
 from app.crypto.cipher import nonce_size, tag_size
-from app.crypto.kdf import derive_master_key
 from app.crypto.keys import derive_subkeys
-from app.files.decrypt import _decrypt_chunks_parallel, _decrypt_chunks_sequential
+from app.files.decrypt import (
+    _decrypt_chunks_parallel,
+    _decrypt_chunks_sequential,
+    derive_master_key_for_header,
+)
 from app.files.encrypt import DEFAULT_WORKERS, ProgressCallback
 from app.format.constants import MAX_METADATA_CT_LEN, SECTION_LEN_FIELD_SIZE
 from app.format.container import read_footer_at_end, read_sealed_section
@@ -64,12 +67,16 @@ class _DiscardSink:
 
 def verify_file(
     input_path: str | os.PathLike[str],
-    password: str,
+    password: str | None = None,
     *,
+    key: bytes | None = None,
     progress_cb: ProgressCallback | None = None,
     workers: int = DEFAULT_WORKERS,
 ) -> VerifyResult:
     """Authenticate a .thex container's header, metadata, and every chunk.
+
+    Exactly one of `password` or `key` (raw key-file bytes) must be given,
+    matching whichever one `input_path` was actually encrypted with.
 
     Raises the same exceptions as `app.files.decrypt.decrypt_file` on
     failure: `WrongPasswordError` (also raised for a tampered salt, KDF
@@ -78,10 +85,10 @@ def verify_file(
     `TruncatedFileError`, `FormatError`, `UnsupportedVersionError`, or
     `UnsupportedAlgorithmError`.
 
-    Success means the container is fully valid: the password is correct,
-    nothing was tampered with, and nothing is missing, reordered, or
-    duplicated - the same guarantee `decrypt_file` provides, without
-    needing anywhere to write the result.
+    Success means the container is fully valid: the password (or key file)
+    is correct, nothing was tampered with, and nothing is missing,
+    reordered, or duplicated - the same guarantee `decrypt_file` provides,
+    without needing anywhere to write the result.
     """
     input_path = Path(input_path)
 
@@ -89,7 +96,7 @@ def verify_file(
         header = Header.read_from(inp)
         ad_header = header.associated_data
 
-        master_key = derive_master_key(password, header.salt, header.argon2_params)
+        master_key = derive_master_key_for_header(header, password, key)
         subkeys = derive_subkeys(master_key)
 
         try:
@@ -101,7 +108,7 @@ def verify_file(
                 max_ciphertext_len=MAX_METADATA_CT_LEN,
             )
         except AuthenticationError as exc:
-            raise WrongPasswordError("wrong password or corrupted file") from exc
+            raise WrongPasswordError("wrong password/key or corrupted file") from exc
         metadata = deserialize(meta_bytes)
 
         chunks_start = inp.tell()

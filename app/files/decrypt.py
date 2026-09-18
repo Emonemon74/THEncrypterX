@@ -29,11 +29,16 @@ from app.core.errors import (
     WrongPasswordError,
 )
 from app.crypto.cipher import nonce_size, open_, tag_size
-from app.crypto.kdf import derive_master_key
+from app.crypto.kdf import derive_master_key, derive_master_key_from_keyfile
 from app.crypto.keys import derive_subkeys
 from app.files.encrypt import DEFAULT_WORKERS, ProgressCallback
 from app.files.stream import atomic_writer
-from app.format.constants import MAX_METADATA_CT_LEN, SECTION_LEN_FIELD_SIZE
+from app.format.constants import (
+    KDF_ID_ARGON2ID,
+    KDF_ID_KEYFILE,
+    MAX_METADATA_CT_LEN,
+    SECTION_LEN_FIELD_SIZE,
+)
 from app.format.container import (
     chunk_associated_data,
     read_footer_at_end,
@@ -42,6 +47,31 @@ from app.format.container import (
 )
 from app.format.header import Header
 from app.metadata.metadata import FileMetadata, deserialize
+
+
+def derive_master_key_for_header(header: Header, password: str | None, key: bytes | None) -> bytes:
+    """Derive the master key for an already-parsed header, dispatching on
+    its kdf_id. Shared by decrypt_file and verify_file.
+
+    Exactly one of `password`/`key` must be given, and it must match what
+    the header actually requires - passing the wrong one raises ValueError
+    immediately, rather than deriving nonsense key material and only
+    failing later at metadata authentication with a confusing "wrong
+    password" for what was actually a missing --key-file.
+    """
+    if (password is None) == (key is None):
+        raise ValueError("pass exactly one of password or key")
+
+    if header.kdf_id == KDF_ID_ARGON2ID:
+        if password is None:
+            raise ValueError("this file was encrypted with a password, not a key file")
+        assert header.argon2_params is not None  # guaranteed by Header.__post_init__
+        return derive_master_key(password, header.salt, header.argon2_params)
+    if header.kdf_id == KDF_ID_KEYFILE:
+        if key is None:
+            raise ValueError("this file was encrypted with a key file, not a password")
+        return derive_master_key_from_keyfile(key, header.salt)
+    raise AssertionError(f"unreachable: Header validated kdf_id {header.kdf_id}")
 
 
 class WriteSink(Protocol):
@@ -143,12 +173,17 @@ def _decrypt_chunks_parallel(
 def decrypt_file(
     input_path: str | os.PathLike[str],
     output_path: str | os.PathLike[str] | None,
-    password: str,
+    password: str | None = None,
     *,
+    key: bytes | None = None,
     progress_cb: ProgressCallback | None = None,
     workers: int = DEFAULT_WORKERS,
 ) -> FileMetadata:
     """Decrypt `input_path` (a .thex container) into `output_path`.
+
+    Exactly one of `password` or `key` (raw key-file bytes) must be given,
+    and it must match what `input_path` was actually encrypted with - see
+    derive_master_key_for_header.
 
     If `output_path` is None, the output name is taken from the authenticated
     metadata's `original_name` and placed next to `input_path` - and, unlike
@@ -174,7 +209,7 @@ def decrypt_file(
         header = Header.read_from(inp)
         ad_header = header.associated_data
 
-        master_key = derive_master_key(password, header.salt, header.argon2_params)
+        master_key = derive_master_key_for_header(header, password, key)
         subkeys = derive_subkeys(master_key)
 
         try:
@@ -186,10 +221,10 @@ def decrypt_file(
                 max_ciphertext_len=MAX_METADATA_CT_LEN,
             )
         except AuthenticationError as exc:
-            # Indistinguishable, by design, from a genuinely wrong password:
-            # this also fires if the salt, KDF params, or metadata ciphertext
-            # were tampered with.
-            raise WrongPasswordError("wrong password or corrupted file") from exc
+            # Indistinguishable, by design, from a genuinely wrong
+            # password/key file: this also fires if the salt, KDF params,
+            # or metadata ciphertext were tampered with.
+            raise WrongPasswordError("wrong password/key or corrupted file") from exc
         metadata = deserialize(meta_bytes)
 
         must_not_exist = output_path is None

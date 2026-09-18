@@ -16,6 +16,7 @@ from app.crypto.kdf import (
     SALT_LEN,
     Argon2Params,
     derive_master_key,
+    derive_master_key_from_keyfile,
     generate_salt,
 )
 
@@ -74,6 +75,62 @@ def test_unicode_password_supported() -> None:
     salt = generate_salt()
     key = derive_master_key("pÀsswörd_🔐_ñ" * 10, salt, CHEAP)
     assert len(key) == KEY_LEN
+
+
+# --- derive_master_key_from_keyfile (roadmap Phase 6: key-file support) ------------
+
+
+def test_keyfile_derive_key_length() -> None:
+    raw_key = b"\x01" * KEY_LEN
+    master_key = derive_master_key_from_keyfile(raw_key, generate_salt())
+    assert isinstance(master_key, bytes)
+    assert len(master_key) == KEY_LEN
+
+
+def test_keyfile_derive_is_deterministic() -> None:
+    raw_key = b"\x02" * KEY_LEN
+    salt = generate_salt()
+    assert derive_master_key_from_keyfile(raw_key, salt) == derive_master_key_from_keyfile(
+        raw_key, salt
+    )
+
+
+def test_keyfile_different_salt_changes_master_key() -> None:
+    """The whole point of salting here: the same key file used on two
+    different files must not derive the same master key (see the nonce-
+    reuse-across-files discussion in derive_master_key_from_keyfile's
+    docstring)."""
+    raw_key = b"\x03" * KEY_LEN
+    k1 = derive_master_key_from_keyfile(raw_key, generate_salt())
+    k2 = derive_master_key_from_keyfile(raw_key, generate_salt())
+    assert k1 != k2
+
+
+def test_keyfile_different_raw_key_changes_master_key() -> None:
+    salt = generate_salt()
+    k1 = derive_master_key_from_keyfile(b"\x04" * KEY_LEN, salt)
+    k2 = derive_master_key_from_keyfile(b"\x05" * KEY_LEN, salt)
+    assert k1 != k2
+
+
+def test_keyfile_derive_differs_from_password_derive() -> None:
+    """Sanity check that the two KDF paths are genuinely independent, not
+    just two names for the same computation."""
+    salt = generate_salt()
+    raw_key = b"\x06" * KEY_LEN
+    assert derive_master_key_from_keyfile(raw_key, salt) != derive_master_key(
+        "some password", salt, CHEAP
+    )
+
+
+def test_keyfile_wrong_raw_key_length_rejected() -> None:
+    with pytest.raises(ValueError, match="raw_key"):
+        derive_master_key_from_keyfile(b"too short", generate_salt())
+
+
+def test_keyfile_wrong_salt_length_rejected() -> None:
+    with pytest.raises(ValueError, match="salt"):
+        derive_master_key_from_keyfile(b"\x07" * KEY_LEN, b"tooshort")
 
 
 @pytest.mark.parametrize(

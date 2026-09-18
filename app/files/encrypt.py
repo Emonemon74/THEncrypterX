@@ -33,9 +33,16 @@ from pathlib import Path
 from typing import BinaryIO
 
 from app.crypto.cipher import ALGO_AES_256_GCM, ALGO_XCHACHA20_POLY1305, nonce_size, seal
-from app.crypto.kdf import Argon2Params, default_params, derive_master_key, generate_salt
+from app.crypto.kdf import (
+    Argon2Params,
+    default_params,
+    derive_master_key,
+    derive_master_key_from_keyfile,
+    generate_salt,
+)
 from app.crypto.keys import derive_subkeys
 from app.files.stream import atomic_writer, iter_chunks
+from app.format.constants import KDF_ID_ARGON2ID, KDF_ID_KEYFILE
 from app.format.container import (
     chunk_associated_data,
     write_footer,
@@ -162,8 +169,9 @@ def _encrypt_chunks_parallel(
 def encrypt_file(
     input_path: str | os.PathLike[str],
     output_path: str | os.PathLike[str],
-    password: str,
+    password: str | None = None,
     *,
+    key: bytes | None = None,
     aead_id: int = DEFAULT_AEAD_ID,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     argon2_params: Argon2Params | None = None,
@@ -171,6 +179,12 @@ def encrypt_file(
     workers: int = DEFAULT_WORKERS,
 ) -> None:
     """Encrypt `input_path` into a .thex container at `output_path`.
+
+    Exactly one of `password` or `key` (raw key-file bytes - see
+    app.files.keyfile) must be given. `password` goes through Argon2id;
+    `key` is used directly via HKDF (app.crypto.kdf.derive_master_key_from_keyfile)
+    - see docs/threat-model.md for why key-file mode skips Argon2id
+    entirely rather than treating the key file as a "password".
 
     Streams the input in `chunk_size`-byte pieces; memory use stays roughly
     constant regardless of input file size (see app.files.stream.iter_chunks).
@@ -187,17 +201,36 @@ def encrypt_file(
     (aside from the random nonces every run picks regardless) and any
     `workers` value can decrypt a file encrypted with any other.
     """
+    if (password is None) == (key is None):
+        raise ValueError("pass exactly one of password or key")
+
     input_path = Path(input_path)
-    params = argon2_params or default_params()
 
     # Stat the input (and validate it exists) before creating any output.
     metadata = from_path(input_path)
 
     salt = generate_salt()
-    header = Header(aead_id=aead_id, chunk_size=chunk_size, argon2_params=params, salt=salt)
+    if password is not None:
+        params = argon2_params or default_params()
+        header = Header(
+            aead_id=aead_id,
+            chunk_size=chunk_size,
+            argon2_params=params,
+            salt=salt,
+            kdf_id=KDF_ID_ARGON2ID,
+        )
+        master_key = derive_master_key(password, salt, params)
+    else:
+        assert key is not None  # narrowed by the exactly-one check above
+        header = Header(
+            aead_id=aead_id,
+            chunk_size=chunk_size,
+            argon2_params=None,
+            salt=salt,
+            kdf_id=KDF_ID_KEYFILE,
+        )
+        master_key = derive_master_key_from_keyfile(key, salt)
     ad_header = header.associated_data
-
-    master_key = derive_master_key(password, salt, params)
     subkeys = derive_subkeys(master_key)
 
     aes_gcm_prefix = os.urandom(4) if aead_id == ALGO_AES_256_GCM else b""

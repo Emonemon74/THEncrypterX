@@ -62,6 +62,47 @@ raises the cost per guess from nanoseconds to a fraction of a second; it
 does not make `password123` safe. There is currently no password-strength
 check in the CLI or GUI - a reasonable roadmap item.
 
+## Key file → key: an alternative to Argon2id
+
+`thencrypterx keygen` / `--key-file` (`app/files/keyfile.py`,
+`app/crypto/kdf.py::derive_master_key_from_keyfile`) offers a second way to
+get a master key: instead of a password run through Argon2id, a 32-byte
+cryptographically random key stored in a `.thexkey` file is fed through
+HKDF-Extract-and-Expand together with the per-file salt. No memory-hard
+stretching is applied, deliberately - Argon2id exists to slow down
+*guessing* a low-entropy secret, and a uniformly random 32-byte key isn't
+guessable at all, so stretching it would only slow down every legitimate
+use for no security benefit.
+
+**This changes the threat model, not just the mechanism.** A password can
+be memorized, chosen to be memorable, and re-typed if forgotten (at the
+cost of being guessable, which is exactly what Argon2id defends against). A
+key file is the opposite trade: nothing to guess, but nothing to remember
+either.
+
+- **There is no recovery from a lost key file.** Unlike a forgotten
+  password, a lost key file cannot be re-derived or reset - anything
+  encrypted with it is permanently unrecoverable. Back it up somewhere at
+  least as durable as the data it protects, and somewhere separate from
+  that data (a backup sitting next to the files it unlocks defeats the
+  point of having a second factor).
+- **A copy of the key file is equivalent to knowing the password.** Anyone
+  who obtains it can decrypt anything encrypted with it, with no guessing
+  required and no rate-limit to defeat. Treat the file itself - at rest, in
+  backups, in transit - with the same care as plaintext of what it
+  protects.
+- **Never commit a key file to version control.** It is a bare secret with
+  no stretching to slow down anyone who finds it in `git log`, unlike a
+  password (which at least costs an attacker an Argon2id computation per
+  guess).
+- **Reusing one key file across many files is supported and safe against
+  nonce collisions specifically because of the per-file salt** (see
+  `derive_master_key_from_keyfile`'s docstring): each file still gets its
+  own derived master key, so AES-256-GCM's per-file 32-bit nonce prefix
+  stays collision-safe the same way it does under password mode. Reuse
+  does *not*, however, reduce the "one leaked copy = total compromise"
+  exposure above - it multiplies it across every file that key protects.
+
 ## Key separation: HKDF subkeys
 
 The master key is never used to encrypt anything directly. HKDF-SHA256

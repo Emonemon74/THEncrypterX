@@ -34,6 +34,7 @@ from app.core.errors import (
 from app.crypto.cipher import ALGO_AES_256_GCM, ALGO_XCHACHA20_POLY1305
 from app.files.decrypt import decrypt_file
 from app.files.encrypt import DEFAULT_AEAD_ID, DEFAULT_CHUNK_SIZE, encrypt_file
+from app.files.keyfile import generate_key_file, read_key_file
 from app.files.shred import shred_file
 from app.files.verify import verify_file
 from app.format.container import read_footer_at_end
@@ -89,6 +90,33 @@ def _resolve_password(password_file: Path | None, prompt_text: str, *, confirm: 
     return str(typer.prompt(prompt_text, hide_input=True, confirmation_prompt=confirm))
 
 
+def _resolve_key_source(
+    password_file: Path | None,
+    key_file: Path | None,
+    prompt_text: str,
+    *,
+    confirm: bool,
+) -> tuple[str | None, bytes | None]:
+    """Resolve exactly one of (password, key-file bytes) for a command that
+    accepts --key-file as an alternative to a password.
+
+    Returns (password, None) or (None, key_bytes) - never both, never
+    neither. A malformed --key-file is reported and exits cleanly here
+    rather than propagating a raw exception, matching _resolve_password's
+    handling of an empty --password-file.
+    """
+    if key_file is not None:
+        if password_file is not None:
+            err_console.print("[red]--password-file and --key-file are mutually exclusive.[/red]")
+            raise typer.Exit(code=EXIT_UNEXPECTED)
+        try:
+            return None, read_key_file(key_file)
+        except FormatError as exc:
+            err_console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=EXIT_FORMAT_ERROR) from None
+    return _resolve_password(password_file, prompt_text, confirm=confirm), None
+
+
 def _make_progress() -> Progress:
     return Progress(
         TextColumn("[progress.description]{task.description}"),
@@ -124,6 +152,14 @@ def encrypt(
     password_file: Path | None = typer.Option(
         None, "--password-file", help="Read the password from this file's first line."
     ),
+    key_file: Path | None = typer.Option(
+        None,
+        "--key-file",
+        exists=True,
+        readable=True,
+        help="Use this key file instead of a password (see 'keygen'). "
+        "Mutually exclusive with --password-file/the password prompt.",
+    ),
 ) -> None:
     """Encrypt a file into a .thex container."""
     if aead not in _AEAD_NAMES:
@@ -133,7 +169,7 @@ def encrypt(
         raise typer.Exit(code=EXIT_UNEXPECTED)
 
     output_path = output if output is not None else input_file.with_name(input_file.name + ".thex")
-    password = _resolve_password(password_file, "Password", confirm=True)
+    password, key = _resolve_key_source(password_file, key_file, "Password", confirm=True)
     total_size = input_file.stat().st_size or 1
 
     try:
@@ -147,6 +183,7 @@ def encrypt(
                 input_file,
                 output_path,
                 password,
+                key=key,
                 aead_id=_AEAD_NAMES[aead],
                 chunk_size=chunk_size,
                 progress_cb=on_progress,
@@ -155,6 +192,9 @@ def encrypt(
     except KeyboardInterrupt:
         err_console.print("[yellow]Cancelled.[/yellow]")
         raise typer.Exit(code=EXIT_CANCELLED) from None
+    except ValueError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=EXIT_UNEXPECTED) from None
     except ThexError as exc:
         err_console.print(f"[red]Encryption failed:[/red] {exc}")
         raise typer.Exit(code=_exit_code_for(exc)) from None
@@ -178,9 +218,18 @@ def decrypt(
     password_file: Path | None = typer.Option(
         None, "--password-file", help="Read the password from this file's first line."
     ),
+    key_file: Path | None = typer.Option(
+        None,
+        "--key-file",
+        exists=True,
+        readable=True,
+        help="Use this key file instead of a password - must be the same key "
+        "file the container was encrypted with. Mutually exclusive with "
+        "--password-file/the password prompt.",
+    ),
 ) -> None:
     """Decrypt a .thex container back to its original file."""
-    password = _resolve_password(password_file, "Password", confirm=False)
+    password, key = _resolve_key_source(password_file, key_file, "Password", confirm=False)
 
     try:
         with _make_progress() as progress:
@@ -194,7 +243,7 @@ def decrypt(
                 progress.update(task, completed=done)
 
             metadata = decrypt_file(
-                input_file, output, password, progress_cb=on_progress, workers=workers
+                input_file, output, password, key=key, progress_cb=on_progress, workers=workers
             )
     except KeyboardInterrupt:
         err_console.print("[yellow]Cancelled.[/yellow]")
@@ -202,8 +251,11 @@ def decrypt(
     except FileExistsError as exc:
         err_console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=EXIT_UNEXPECTED) from None
+    except ValueError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=EXIT_UNEXPECTED) from None
     except WrongPasswordError:
-        err_console.print("[red]Wrong password or corrupted file.[/red]")
+        err_console.print("[red]Wrong password/key or corrupted file.[/red]")
         raise typer.Exit(code=EXIT_WRONG_PASSWORD) from None
     except ThexError as exc:
         err_console.print(f"[red]Decryption failed:[/red] {exc}")
@@ -225,11 +277,21 @@ def verify(
     password_file: Path | None = typer.Option(
         None, "--password-file", help="Read the password from this file's first line."
     ),
+    key_file: Path | None = typer.Option(
+        None,
+        "--key-file",
+        exists=True,
+        readable=True,
+        help="Use this key file instead of a password - must be the same key "
+        "file the container was encrypted with. Mutually exclusive with "
+        "--password-file/the password prompt.",
+    ),
 ) -> None:
     """Authenticate a .thex container's header, metadata, and every chunk -
-    without writing any plaintext anywhere. Needs the password: confirming a
-    container is genuinely intact requires the key that proves it."""
-    password = _resolve_password(password_file, "Password", confirm=False)
+    without writing any plaintext anywhere. Needs the password (or key
+    file): confirming a container is genuinely intact requires the key that
+    proves it."""
+    password, key = _resolve_key_source(password_file, key_file, "Password", confirm=False)
 
     try:
         with _make_progress() as progress:
@@ -242,14 +304,19 @@ def verify(
                     started["value"] = True
                 progress.update(task, completed=done)
 
-            result = verify_file(input_file, password, progress_cb=on_progress, workers=workers)
+            result = verify_file(
+                input_file, password, key=key, progress_cb=on_progress, workers=workers
+            )
     except KeyboardInterrupt:
         err_console.print("[yellow]Cancelled.[/yellow]")
         raise typer.Exit(code=EXIT_CANCELLED) from None
+    except ValueError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=EXIT_UNEXPECTED) from None
     except WrongPasswordError:
         console.print("Container:        [red]INVALID[/red]")
-        console.print("Metadata:         [red]FAILED[/red] (wrong password, or tampered)")
-        err_console.print("[red]Wrong password or corrupted file.[/red]")
+        console.print("Metadata:         [red]FAILED[/red] (wrong password/key, or tampered)")
+        err_console.print("[red]Wrong password/key or corrupted file.[/red]")
         raise typer.Exit(code=EXIT_WRONG_PASSWORD) from None
     except ThexError as exc:
         console.print("Container:        [red]INVALID[/red]")
@@ -282,16 +349,46 @@ def inspect(
         raise typer.Exit(code=_exit_code_for(exc)) from None
 
     aead_label = _AEAD_LABELS.get(header.aead_id, f"unknown({header.aead_id})")
-    p = header.argon2_params
     console.print(f"format_version: {header.format_version}")
     console.print(f"aead: {aead_label}")
     console.print(f"chunk_size: {header.chunk_size}")
-    console.print(
-        "argon2: "
-        f"memory_cost_kib={p.memory_cost_kib} time_cost={p.time_cost} parallelism={p.parallelism}"
-    )
+    if header.argon2_params is not None:
+        p = header.argon2_params
+        console.print(
+            "kdf: argon2id "
+            f"(memory_cost_kib={p.memory_cost_kib} time_cost={p.time_cost} "
+            f"parallelism={p.parallelism})"
+        )
+    else:
+        console.print("kdf: key-file (no password-based parameters)")
     console.print(f"salt: {header.salt.hex()}")
     console.print(f"total_chunks: {total_chunks}")
+
+
+@app.command()
+def keygen(
+    output: Path = typer.Option(..., "-o", "--output", help="Path to write the new key file to."),
+) -> None:
+    """Generate a random key file for --key-file mode, an alternative to a
+    password (see 'encrypt --key-file' / 'decrypt --key-file').
+
+    Anyone with a copy of this file can decrypt anything encrypted with it,
+    and there is no way to recover a lost key file - unlike a forgotten
+    password, it cannot be re-typed from memory. Store it at least as
+    securely as the data it protects, ideally separately from it, and back
+    it up. See docs/threat-model.md.
+    """
+    try:
+        generate_key_file(output)
+    except FileExistsError:
+        err_console.print(f"[red]{output} already exists - refusing to overwrite a key file.[/red]")
+        raise typer.Exit(code=EXIT_UNEXPECTED) from None
+
+    console.print(f"[green]Generated key file[/green] -> {output}")
+    console.print(
+        "[yellow]Keep this file safe: anyone with a copy can decrypt anything "
+        "encrypted with it, and losing it makes that data unrecoverable.[/yellow]"
+    )
 
 
 @app.command()

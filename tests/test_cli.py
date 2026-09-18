@@ -149,6 +149,127 @@ def test_decrypt_refuses_to_overwrite_existing_file(tmp_path: Path) -> None:
     assert (tmp_path / "report.txt").read_bytes() == b"original content"
 
 
+# --- keygen / --key-file ----------------------------------------------------------
+
+
+def test_keygen_creates_a_key_file(tmp_path: Path) -> None:
+    out = tmp_path / "mykey.thexkey"
+
+    result = runner.invoke(app, ["keygen", "-o", str(out)])
+
+    assert result.exit_code == 0, result.output
+    assert out.exists()
+    assert "Generated key file" in result.output
+
+
+def test_keygen_refuses_to_overwrite(tmp_path: Path) -> None:
+    out = tmp_path / "mykey.thexkey"
+    runner.invoke(app, ["keygen", "-o", str(out)])
+
+    result = runner.invoke(app, ["keygen", "-o", str(out)])
+
+    assert result.exit_code == EXIT_UNEXPECTED
+    assert "already exists" in result.output
+
+
+def test_encrypt_decrypt_roundtrip_with_key_file(tmp_path: Path) -> None:
+    key_path = tmp_path / "mykey.thexkey"
+    runner.invoke(app, ["keygen", "-o", str(key_path)])
+    src = tmp_path / "doc.txt"
+    src.write_bytes(b"secret via key file")
+    enc = tmp_path / "doc.txt.thex"
+
+    result = runner.invoke(app, ["encrypt", str(src), "-o", str(enc), "--key-file", str(key_path)])
+    assert result.exit_code == 0, result.output
+
+    dec = tmp_path / "restored.txt"
+    result = runner.invoke(app, ["decrypt", str(enc), "-o", str(dec), "--key-file", str(key_path)])
+    assert result.exit_code == 0, result.output
+    assert dec.read_bytes() == src.read_bytes()
+
+
+def test_verify_with_key_file(tmp_path: Path) -> None:
+    key_path = tmp_path / "mykey.thexkey"
+    runner.invoke(app, ["keygen", "-o", str(key_path)])
+    src = tmp_path / "doc.txt"
+    src.write_bytes(b"data")
+    enc = tmp_path / "doc.txt.thex"
+    runner.invoke(app, ["encrypt", str(src), "-o", str(enc), "--key-file", str(key_path)])
+
+    result = runner.invoke(app, ["verify", str(enc), "--key-file", str(key_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "VALID" in result.output
+
+
+def test_decrypt_wrong_key_file_exit_code(tmp_path: Path) -> None:
+    right_key = tmp_path / "right.thexkey"
+    wrong_key = tmp_path / "wrong.thexkey"
+    runner.invoke(app, ["keygen", "-o", str(right_key)])
+    runner.invoke(app, ["keygen", "-o", str(wrong_key)])
+    src = tmp_path / "doc.txt"
+    src.write_bytes(b"data")
+    enc = tmp_path / "doc.txt.thex"
+    runner.invoke(app, ["encrypt", str(src), "-o", str(enc), "--key-file", str(right_key)])
+
+    result = runner.invoke(
+        app, ["decrypt", str(enc), "-o", str(tmp_path / "out.txt"), "--key-file", str(wrong_key)]
+    )
+
+    assert result.exit_code == EXIT_WRONG_PASSWORD
+
+
+def test_decrypt_rejects_key_file_for_password_encrypted_file(tmp_path: Path) -> None:
+    enc = _encrypt_via_cli(tmp_path, "report.txt", b"secret", "pw")
+    key_path = tmp_path / "mykey.thexkey"
+    runner.invoke(app, ["keygen", "-o", str(key_path)])
+
+    result = runner.invoke(
+        app, ["decrypt", str(enc), "-o", str(tmp_path / "out.txt"), "--key-file", str(key_path)]
+    )
+
+    assert result.exit_code == EXIT_UNEXPECTED
+    assert "password" in result.output.lower()
+
+
+def test_encrypt_rejects_password_file_and_key_file_together(tmp_path: Path) -> None:
+    src = tmp_path / "doc.txt"
+    src.write_bytes(b"data")
+    pw_file = tmp_path / "pw.txt"
+    pw_file.write_text("pw\n")
+    key_path = tmp_path / "mykey.thexkey"
+    runner.invoke(app, ["keygen", "-o", str(key_path)])
+
+    result = runner.invoke(
+        app,
+        [
+            "encrypt",
+            str(src),
+            "--password-file",
+            str(pw_file),
+            "--key-file",
+            str(key_path),
+        ],
+    )
+
+    assert result.exit_code == EXIT_UNEXPECTED
+    assert "mutually exclusive" in result.output
+
+
+def test_inspect_shows_keyfile_kdf(tmp_path: Path) -> None:
+    key_path = tmp_path / "mykey.thexkey"
+    runner.invoke(app, ["keygen", "-o", str(key_path)])
+    src = tmp_path / "doc.txt"
+    src.write_bytes(b"data")
+    enc = tmp_path / "doc.txt.thex"
+    runner.invoke(app, ["encrypt", str(src), "-o", str(enc), "--key-file", str(key_path)])
+
+    result = runner.invoke(app, ["inspect", str(enc)])
+
+    assert result.exit_code == 0, result.output
+    assert "kdf: key-file" in result.output
+
+
 # --- inspect --------------------------------------------------------------------
 
 

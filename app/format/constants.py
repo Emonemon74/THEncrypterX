@@ -12,6 +12,12 @@ MAGIC_END = b"THXE"
 FORMAT_VERSION = 1
 
 KDF_ID_ARGON2ID = 1
+# A pre-shared random key file instead of a stretched password (roadmap
+# Phase 6 / `thencrypterx keygen`) - no KDF params block at all, since a
+# uniformly random 32-byte key needs no memory-hard stretching (that exists
+# to slow down guessing a low-entropy secret, and a random key isn't
+# guessable in the first place). See app/crypto/keyfile.py.
+KDF_ID_KEYFILE = 2
 
 # Fixed-header layout: magic(4) + version(u16) + kdf_id(u8) + aead_id(u8)
 # + kdf_params_len(u8) + salt_len(u8) + chunk_size(u32) + reserved(u16) = 16

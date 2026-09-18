@@ -34,6 +34,21 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   confirmation prompt when closing the window while a job is running
   (cancels the job and lets its own cleanup run, rather than abandoning a
   background thread and any partial temp file).
+- Standalone desktop executables (`packaging/THEncrypterX.spec`, PyInstaller)
+  and a release pipeline (`.github/workflows/release.yml`): builds on
+  Linux/macOS/Windows on a `v*` tag push, gated on the full test suite
+  passing on all three platforms, publishes to GitHub Releases as a draft.
+- `thencrypterx keygen` / `--key-file` (encrypt/decrypt/verify): an
+  alternative to a password - a 32-byte random key in a `.thexkey` file
+  (`app/files/keyfile.py`), used via HKDF-Extract-and-Expand
+  (`app.crypto.kdf.derive_master_key_from_keyfile`) rather than Argon2id, since
+  a uniformly random key needs no memory-hard stretching. New `kdf_id=2` in
+  the `.thex` header (`docs/file-format.md` §3a) - no format_version bump,
+  since the header's `kdf_params_len` field was already designed for this
+  (old readers correctly refuse an unknown `kdf_id` instead of misparsing
+  it). See `docs/threat-model.md` for what a key file changes about the
+  threat model versus a password, including why it's safe to reuse one key
+  file across many files. 35 new tests.
 
 ### Security
 - Fixed a denial-of-service bug found by the existing bit-flip property

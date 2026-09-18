@@ -43,11 +43,18 @@ def _bridge(
 
 @dataclass(frozen=True, slots=True)
 class EncryptJob:
-    """Encrypt `input_path` into `output_path`. See app.files.encrypt.encrypt_file."""
+    """Encrypt `input_path` into `output_path`. See app.files.encrypt.encrypt_file.
+
+    Exactly one of `password`/`key` should be set - not yet exposed in the
+    GUI (roadmap Step 9 is CLI-first; `key` exists here for API parity with
+    app.files.encrypt.encrypt_file so a future GUI key-file picker is a
+    thin addition, not a redesign).
+    """
 
     input_path: str | os.PathLike[str]
     output_path: str | os.PathLike[str]
-    password: str
+    password: str | None = None
+    key: bytes | None = None
     aead_id: int = ALGO_XCHACHA20_POLY1305
     chunk_size: int = DEFAULT_CHUNK_SIZE
     argon2_params: Argon2Params | None = None
@@ -63,6 +70,7 @@ class EncryptJob:
             self.input_path,
             self.output_path,
             self.password,
+            key=self.key,
             aead_id=self.aead_id,
             chunk_size=self.chunk_size,
             argon2_params=self.argon2_params,
@@ -73,11 +81,16 @@ class EncryptJob:
 
 @dataclass(frozen=True, slots=True)
 class DecryptJob:
-    """Decrypt `input_path` into `output_path`. See app.files.decrypt.decrypt_file."""
+    """Decrypt `input_path` into `output_path`. See app.files.decrypt.decrypt_file.
+
+    Exactly one of `password`/`key` should be set - see EncryptJob's
+    docstring for why `key` exists here ahead of any GUI support for it.
+    """
 
     input_path: str | os.PathLike[str]
     output_path: str | os.PathLike[str] | None
-    password: str
+    password: str | None = None
+    key: bytes | None = None
     workers: int = DEFAULT_WORKERS
 
     def run(
@@ -90,6 +103,7 @@ class DecryptJob:
             self.input_path,
             self.output_path,
             self.password,
+            key=self.key,
             progress_cb=_bridge(on_progress, cancel_token),
             workers=self.workers,
         )
@@ -99,10 +113,14 @@ class DecryptJob:
 class VerifyJob:
     """Authenticate `input_path` in full - header, metadata, every chunk -
     without writing plaintext anywhere. See app.files.verify.verify_file.
+
+    Exactly one of `password`/`key` should be set - see EncryptJob's
+    docstring for why `key` exists here ahead of any GUI support for it.
     """
 
     input_path: str | os.PathLike[str]
-    password: str
+    password: str | None = None
+    key: bytes | None = None
     workers: int = DEFAULT_WORKERS
 
     def run(
@@ -114,6 +132,7 @@ class VerifyJob:
         return verify_file(
             self.input_path,
             self.password,
+            key=self.key,
             progress_cb=_bridge(on_progress, cancel_token),
             workers=self.workers,
         )
@@ -124,15 +143,18 @@ class HeaderInfo:
     """A read-only snapshot of a .thex container's unencrypted header.
 
     Everything here is visible without a password - that is the whole point
-    of InspectJob.
+    of InspectJob. `argon2_*` fields are None when `kdf_id` is
+    `KDF_ID_KEYFILE` (see app/format/header.py) - the file needs a key file,
+    not a password, and has no Argon2 parameters to show.
     """
 
     format_version: int
     aead_id: int
     chunk_size: int
-    argon2_memory_cost_kib: int
-    argon2_time_cost: int
-    argon2_parallelism: int
+    kdf_id: int
+    argon2_memory_cost_kib: int | None
+    argon2_time_cost: int | None
+    argon2_parallelism: int | None
     salt_hex: str
     total_chunks: int
 
@@ -148,13 +170,15 @@ class InspectJob:
             header = Header.read_from(f)
             total_chunks, _ = read_footer_at_end(f)
 
+        p = header.argon2_params
         return HeaderInfo(
             format_version=header.format_version,
             aead_id=header.aead_id,
             chunk_size=header.chunk_size,
-            argon2_memory_cost_kib=header.argon2_params.memory_cost_kib,
-            argon2_time_cost=header.argon2_params.time_cost,
-            argon2_parallelism=header.argon2_params.parallelism,
+            kdf_id=header.kdf_id,
+            argon2_memory_cost_kib=p.memory_cost_kib if p is not None else None,
+            argon2_time_cost=p.time_cost if p is not None else None,
+            argon2_parallelism=p.parallelism if p is not None else None,
             salt_hex=header.salt.hex(),
             total_chunks=total_chunks,
         )

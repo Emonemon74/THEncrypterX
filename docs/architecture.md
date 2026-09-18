@@ -56,7 +56,7 @@ that does, `gui/workers.py`).
 
 | Module | Responsibility | Depends on |
 |---|---|---|
-| `app/crypto/kdf.py` | Argon2id: password + salt → 32-byte master key, versioned params | `argon2-cffi` |
+| `app/crypto/kdf.py` | Argon2id: password + salt → master key (versioned, bounded params); HKDF-Extract-and-Expand for key-file mode | `argon2-cffi`, `cryptography` |
 | `app/crypto/keys.py` | HKDF: master key → `meta_key` / `data_key` subkeys (domain separation) | `cryptography` |
 | `app/crypto/cipher.py` | AEAD `seal`/`open_`: XChaCha20-Poly1305 (PyNaCl) and AES-256-GCM (`cryptography`) behind one interface | PyNaCl, `cryptography` |
 | `app/format/constants.py` | Magic bytes, field widths, size caps - single source of truth for the wire format | - |
@@ -68,15 +68,22 @@ that does, `gui/workers.py`).
 | `app/files/encrypt.py` | Orchestrates header + metadata + chunk loop → `.thex`, streaming | everything above |
 | `app/files/decrypt.py` | Reverse of `encrypt.py`, fail-closed at every step, optional metadata-derived output name | everything above |
 | `app/files/verify.py` | `verify_file`: reuses `decrypt.py`'s chunk-authentication loops against a discard sink - authenticates everything, writes nothing | `app.files.decrypt` |
+| `app/files/keyfile.py` | `generate_key_file`/`read_key_file`: the separate `.thexkey` format for key-file mode | `app.crypto.kdf`, `app.files.stream` |
 | `app/files/shred.py` | Best-effort overwrite-then-delete | - |
 | `app/core/errors.py` | Typed exception hierarchy (`ThexError` and subtypes) shared by every layer | - |
 | `app/core/progress.py` | `Progress` value object, thread-safe `CancellationToken` | `app.core.errors` |
-| `app/core/service.py` | `EncryptJob`/`DecryptJob`/`InspectJob`: bridge `app.files` callbacks to `Progress`/cancellation | `app.core.progress`, `app.files.*` |
-| `app/cli.py` | `typer` CLI: `encrypt`/`decrypt`/`inspect`/`shred`, password sourcing, exit codes | `app.files.*` |
+| `app/core/service.py` | `EncryptJob`/`DecryptJob`/`VerifyJob`/`InspectJob`: bridge `app.files` callbacks to `Progress`/cancellation | `app.core.progress`, `app.files.*` |
+| `app/benchmark.py` | Shared measurement core for `thencrypterx benchmark` and `benchmarks/benchmark_files.py` | `app.files.encrypt`/`decrypt` |
+| `app/cli.py` | `typer` CLI: `encrypt`/`decrypt`/`verify`/`inspect`/`keygen`/`benchmark`/`shred`, password/key-file sourcing, exit codes | `app.files.*` |
 | `app/gui/main_window.py` | PySide6 window: file/output selection, password field, buttons, progress bar | `app.gui.workers` |
 | `app/gui/workers.py` | `EncryptWorker`/`DecryptWorker`: run one job per `QThread`, report back via Qt signals | `app.core.service` |
 
 ## Data flow: encrypting a file
+
+Key-file mode (`--key-file`) branches only at the first step: a random key
+file's bytes take HKDF-Extract-and-Expand instead of Argon2id (no memory-hard
+stretching - see `docs/threat-model.md`), producing the same `master_key`
+shape everything below consumes unchanged.
 
 ```text
 password ──Argon2id(random salt, versioned params)──► master_key (32B)

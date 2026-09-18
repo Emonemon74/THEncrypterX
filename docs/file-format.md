@@ -12,7 +12,7 @@ padding between fields.
 
 ```text
 [ Fixed Header  (16 bytes)              ]
-[ Argon2id params block (13 bytes)      ]
+[ KDF params block (13 bytes for kdf_id=1, 0 bytes for kdf_id=2) ]
 [ Salt (16 bytes)                       ]
 [ Metadata nonce ][ len (u32) ][ Encrypted metadata + tag ]
 [ Chunk 0 ]
@@ -28,16 +28,16 @@ padding between fields.
 |---:|---:|---|---|
 | 0 | 4 | `magic` | ASCII `THX1` (`0x54 0x48 0x58 0x31`) |
 | 4 | 2 | `format_version` | u16, currently `1` |
-| 6 | 1 | `kdf_id` | u8, `1` = Argon2id (only value defined) |
+| 6 | 1 | `kdf_id` | u8, `1` = Argon2id, `2` = key-file (§3a) |
 | 7 | 1 | `aead_id` | u8, `1` = XChaCha20-Poly1305, `2` = AES-256-GCM |
-| 8 | 1 | `kdf_params_len` | u8, length of the block in §3. Always `13` for `kdf_id=1` |
-| 9 | 1 | `salt_len` | u8, always `16` |
+| 8 | 1 | `kdf_params_len` | u8, length of the block in §3. `13` for `kdf_id=1`, `0` for `kdf_id=2` |
+| 9 | 1 | `salt_len` | u8, always `16` (both `kdf_id` values use a salt - see §3a) |
 | 10 | 4 | `chunk_size` | u32, plaintext bytes per chunk (e.g. `1048576` for 1 MiB) |
 | 14 | 2 | `reserved` | u16, must be `0`; a parser rejects any other value |
 
 Python struct format: `"<4sHBBBBIH"` (16 bytes).
 
-## 3. Argon2id params block (13 bytes, immediately after the fixed header)
+## 3. Argon2id params block (13 bytes, immediately after the fixed header when `kdf_id=1`)
 
 | Offset (relative) | Size | Field |
 |---:|---:|---|
@@ -50,7 +50,38 @@ Python struct format: `"<4sHBBBBIH"` (16 bytes).
 
 Python struct format: `"<IIBBBH"` (13 bytes).
 
-Only Argon2id parameters travel in the header today. If a second KDF is ever
+A parser must validate `memory_cost_kib`/`time_cost`/`parallelism` against
+sane upper bounds (`app.crypto.kdf.MAX_MEMORY_COST_KIB`/`MAX_TIME_COST`/
+`MAX_PARALLELISM`) before ever calling the KDF - these fields are read from
+the file *before* the header is authenticated (authentication needs the KDF
+to have already run, to get the key that checks the metadata MAC), so an
+unbounded value here is a real denial-of-service vector: a single flipped
+bit can turn `memory_cost_kib` into a value that makes Argon2id's C
+implementation try to allocate/hash an enormous amount of "memory cost"
+before returning control to Python, hanging the process for a very long
+time on a corrupted or malicious file. See `docs/threat-model.md`.
+
+### 3a. `kdf_id=2`: key-file (no KDF params block, `kdf_params_len=0`)
+
+An optional alternative to a password (`thencrypterx keygen` /
+`--key-file`, roadmap Phase 6): a 32-byte cryptographically random key,
+generated once and stored in a separate `.thexkey` file
+(`app/files/keyfile.py`; its own tiny format - `TKEY` magic + version byte
++ 32 raw key bytes, not part of the `.thex` container format described
+here). There is nothing to store in the header beyond the fact that this
+kdf_id was used - a uniformly random key needs no stretching parameters,
+which is exactly why `kdf_params_len=0` for this kdf_id.
+
+The 16-byte salt field is still present and still used, even though a
+random key needs no salt the way Argon2id does for rainbow-table
+resistance: it's HKDF-Extract-and-Expand'd together with the raw key
+(`app.crypto.kdf.derive_master_key_from_keyfile`) so that reusing the same
+key file across multiple files still produces a different master key (and
+therefore different `data_key`/`meta_key`) per file - see that function's
+docstring and `docs/threat-model.md` for why this specifically matters for
+AES-256-GCM's per-file nonce construction.
+
+Only Argon2id and key-file KDFs are defined today. If a third KDF is ever
 added, `kdf_id` gets a new value and `kdf_params_len` changes to match — old
 readers correctly refuse the file via `UnsupportedAlgorithmError` instead of
 misparsing it.
@@ -62,7 +93,7 @@ Raw random bytes from `os.urandom(16)`. Not secret.
 ## 5. Associated data (`AD_HEADER`)
 
 ```text
-AD_HEADER = bytes[0 .. end of salt]   # fixed header || argon2 params || salt
+AD_HEADER = bytes[0 .. end of salt]   # fixed header || KDF params (0 or 13 bytes) || salt
 ```
 
 `AD_HEADER` is the `associated_data` argument to the metadata AEAD call and to
