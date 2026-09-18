@@ -156,6 +156,20 @@ metadata = decrypt_file("document.pdf.thex", "restored.pdf", "a password")
 print(metadata.original_name, metadata.original_size)
 ```
 
+### Web (optional, standalone demo)
+
+```bash
+cd web && npm install && npm run dev
+```
+
+A small client-side-only page (no backend, nothing ever leaves the
+browser) that encrypts/decrypts a file using native Web Crypto primitives.
+**Not** the `.thex` format - its own `.thexweb` format, using PBKDF2 +
+AES-256-GCM instead of Argon2id + XChaCha20-Poly1305, since neither of
+those are natively available in a browser. See
+[`web/README.md`](web/README.md) for the full rationale and what that
+trades away.
+
 ## File format
 
 `.thex` is a versioned binary container: a plaintext header (magic bytes,

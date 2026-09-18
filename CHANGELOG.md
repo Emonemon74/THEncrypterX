@@ -79,6 +79,22 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   parallelization overhead (thread scheduling, GIL reacquisition around
   each AEAD call), made visible for the first time by having both numbers
   side by side. 6 new tests.
+- `web/`: a standalone client-side-only web demo (roadmap Phase 16,
+  scoped down deliberately - see `web/README.md`). Vite + React +
+  TypeScript, zero third-party crypto dependencies - PBKDF2-HMAC-SHA256
+  (600,000 iterations) + AES-256-GCM, both native Web Crypto APIs. Its own
+  `.thexweb` format (magic `TWX1`), not compatible with the desktop/CLI
+  `.thex` format - Argon2id and XChaCha20-Poly1305 have no native browser
+  implementation, and porting them via WASM to get real interop was a
+  deliberate scope decision this project chose not to take on for a
+  browser demo. No backend: everything happens in the tab, nothing is
+  ever sent anywhere; `npm run build` produces a static `dist/` deployable
+  anywhere. Verified with a real round trip through the built UI in a
+  browser (encrypt, download, decrypt the download, byte-for-byte match;
+  wrong password correctly rejected), not just unit tests. 13 vitest
+  tests (roundtrip, wrong password, tampered ciphertext/header, malformed
+  input). New `web` job in `.github/workflows/ci.yml` (Node 22, lint +
+  build + test).
 
 ### Security
 - Fixed a denial-of-service bug found by the existing bit-flip property

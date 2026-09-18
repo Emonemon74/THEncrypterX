@@ -26,6 +26,9 @@ benchmarks/     # benchmark_files.py - throughput/memory/chunk-size measurements
 scripts/        # generate_kat.py - regenerates the frozen known-answer test vector
 packaging/      # PyInstaller spec for the standalone desktop-GUI build
 docs/           # architecture, cryptography/threat-model, file-format, performance, this file
+web/            # standalone client-side web demo - separate Node/TS project,
+                # its own format (.thexweb), not part of the Python package
+                # (see web/README.md - this doc covers app/ only)
 ```
 
 `app/core/*` is the layer both the CLI and the GUI build on - if you're
