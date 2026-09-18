@@ -18,6 +18,12 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   authentication path as `decrypt`, not a separate reimplementation.
   22 new tests (`tests/test_verify.py` plus CLI coverage in
   `tests/test_cli.py`)
+- `tests/test_fuzz_parser.py`: Hypothesis-based fuzzing of every `.thex`
+  parser entry point (header, footer, metadata, chunk framing) with
+  arbitrary unstructured bytes, plus a whole-file fuzz through `verify`,
+  and a targeted regression test confirming extreme length fields
+  (near u32/u64 max) fail fast without over-allocating. 10 new tests,
+  318 total
 
 ### Fixed
 - Closed a TOCTOU race in `decrypt_file(..., output_path=None)`: the

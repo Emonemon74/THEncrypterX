@@ -105,12 +105,22 @@ correctness holds, and any single-bit corruption anywhere in a valid
 container produces a typed failure - never a crash, never a silent wrong
 success.
 
+`tests/test_fuzz_parser.py` goes further, fuzzing every parser entry point
+(header, footer, metadata, chunk framing) with arbitrary, unstructured
+bytes rather than mutations of an otherwise-valid container - plus a
+whole-file fuzz through `verify_file`, the closest thing to what handing an
+attacker-controlled file to this project actually looks like. It also has
+a targeted regression test for extreme length fields (near the u32/u64 max)
+never triggering an oversized allocation, since `read_exact`'s `stream.read(n)`
+only ever returns bytes actually present regardless of what `n` claims.
+Coverage-guided fuzzing (Atheris/libFuzzer) was considered and deliberately
+not added - see the module docstring for why Hypothesis was judged
+sufficient for a format this small and already this strictly validated
+field-by-field.
+
 ## Known gaps (tracked, not silently ignored)
 
 See [`docs/threat-model.md`](threat-model.md#what-is-explicitly-not-protected)
 for the full list (file size not hidden, best-effort-only secure deletion,
 no password-strength check, no post-quantum primitives, no multi-recipient
-support). Fuzz testing of the `.thex` parser beyond Hypothesis-generated
-mutations of valid containers (i.e., true unstructured-input fuzzing with a
-dedicated harness) is a roadmap item - see
-[`docs/ROADMAP.md`](ROADMAP.md), Phase 5.
+support).

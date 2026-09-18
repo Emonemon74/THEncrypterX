@@ -14,7 +14,7 @@ thencrypterx inspect document.pdf.thex
 ## Status
 
 Feature-complete against the [build guide](THEncrypterX_Build_Guide.md)'s v1
-scope. 308 tests passing, CI green on Linux/macOS/Windows × Python 3.12/3.13.
+scope. 318 tests passing, CI green on Linux/macOS/Windows × Python 3.12/3.13.
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for planned post-v1.0 work.
 
 ## Features
@@ -155,7 +155,7 @@ pytest                    # full suite, ~1-5s
 pytest tests/test_security.py -v   # the 22-case tamper matrix
 ```
 
-Test suite breakdown (308 tests total):
+Test suite breakdown (318 tests total):
 
 | Category | File(s) | What it proves |
 |---|---|---|
@@ -166,6 +166,7 @@ Test suite breakdown (308 tests total):
 | Security matrix | `test_security.py` | 22 documented attack scenarios, each with an expected typed failure |
 | Integrity verification | `test_verify.py` | `verify_file` authenticates without writing plaintext; mirrors the tamper matrix against `verify` instead of `decrypt` |
 | Property-based | `test_properties.py` | Round-trip and "any single-bit flip is caught" across hundreds of generated inputs (Hypothesis) |
+| Parser fuzzing | `test_fuzz_parser.py` | Arbitrary/unstructured bytes at every parser entry point (header, footer, metadata, chunk framing, and a whole-file fuzz via `verify`) never crash, hang, or over-allocate |
 | Known-answer vector | `test_kat.py` | A frozen container that must always decode identically - a compatibility guardrail |
 | CLI / core / GUI | `test_cli.py`, `test_core_*.py`, `test_gui_main_window.py` | Argument handling and exit codes, job/progress/cancellation wiring, the PySide6 window (headless, `pytest-qt`) |
 
