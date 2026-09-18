@@ -13,7 +13,8 @@ thencrypterx inspect document.pdf.thex
 ## Status
 
 Feature-complete against the [build guide](THEncrypterX_Build_Guide.md)'s v1
-scope. 263 tests passing, CI green on Linux/macOS/Windows × Python 3.12/3.13.
+scope. 284 tests passing, CI green on Linux/macOS/Windows × Python 3.12/3.13.
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for planned post-v1.0 work.
 
 ## Features
 
@@ -56,9 +57,12 @@ per-file salt; HKDF splits it into independent metadata/data subkeys; AEAD
 (XChaCha20-Poly1305 by default) provides confidentiality and integrity;
 every chunk's index and final-flag are bound into its authenticated data, so
 tampering with content, order, or completeness is all detected the same way.
-The container format is fully specified in
-**[docs/file-format.md](docs/file-format.md)**, and the module layout in
-**[docs/architecture.md](docs/architecture.md)**.
+See **[docs/cryptography.md](docs/cryptography.md)** for why each primitive
+was chosen, and **[docs/security.md](docs/security.md)** for secret-handling
+and file-safety engineering notes. The container format is fully specified
+in **[docs/file-format.md](docs/file-format.md)**, and the module layout in
+**[docs/architecture.md](docs/architecture.md)**. To report a vulnerability,
+see **[SECURITY.md](SECURITY.md)**.
 
 ## Installation
 
@@ -142,7 +146,7 @@ pytest                    # full suite, ~1-5s
 pytest tests/test_security.py -v   # the 22-case tamper matrix
 ```
 
-Test suite breakdown (263 tests total):
+Test suite breakdown (284 tests total):
 
 | Category | File(s) | What it proves |
 |---|---|---|
@@ -158,57 +162,19 @@ Test suite breakdown (263 tests total):
 CI runs the same suite plus `ruff` and `mypy` on every push, across
 Linux/macOS/Windows and Python 3.12/3.13.
 
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** and **[docs/development.md](docs/development.md)**
+for the full dev setup, linting, benchmark, and PR workflow.
+
 ## Benchmarks
 
-Measured with `benchmarks/benchmark_files.py` (median of 3 runs; production
-Argon2id parameters - 256 MiB memory, time_cost 3, parallelism 4, ~0.15s per
-call, included in every Encrypt/Decrypt time below since every real call
-derives its own key):
-
-| File size | AEAD | Encrypt (MB/s) | Decrypt (MB/s) |
-|---:|---|---:|---:|
-| 10 MB | xchacha20-poly1305 | 29.7 | 29.3 |
-| 10 MB | aes-256-gcm | 63.1 | 63.7 |
-| 100 MB | xchacha20-poly1305 | 45.8 | 47.8 |
-| 100 MB | aes-256-gcm | 399.6 | 396.1 |
-| 500 MB | xchacha20-poly1305 | 49.3 | 49.1 |
-| 500 MB | aes-256-gcm | 645.9 | 548.2 |
-| 1024 MB | xchacha20-poly1305 | 48.7 | 49.0 |
-| 1024 MB | aes-256-gcm | 487.2 | 354.3 |
-
-Machine: Apple Silicon, 8 cores, macOS, Python 3.13.7. A chunk-size sweep
-(64 KiB-16 MiB) at 500 MB showed flat throughput for XChaCha20-Poly1305,
-confirming the gap to AES-256-GCM is the cipher itself (OpenSSL's hardware
-AES instructions vs. software ChaCha20), not per-chunk overhead. See
-`docs/threat-model.md` for why XChaCha20-Poly1305 remains the default
-despite being ~10x slower here.
-
-Peak memory stayed in the 275-780 MB range across all file sizes from 10 MB
-to 1024 MB - it does not scale with file size, which is the actual claim
-streaming is meant to prove (a naive whole-file-in-memory implementation
-would need >1 GB of RAM for the 1 GB file; this needed roughly a quarter of
-that, dominated by Argon2id's own 256 MiB working set rather than file
-data). The exact figures are somewhat inflated by test-harness memory from
-generating the random input file; see the script's docstring.
-
-### Parallel workers (`--workers`)
-
-Measured on a 200 MB file, XChaCha20-Poly1305, same 8-core machine:
-
-| Workers | Encrypt (MB/s) | Decrypt (MB/s) |
-|---:|---:|---:|
-| 1 | 45.9 | 44.8 |
-| 2 | 78.6 | 80.3 |
-| 4 | 142.5 | 169.9 |
-| 8 | 189.2 | 137.3 |
-
-Encrypt scales close to linearly through 8 workers (~4.1x). Decrypt peaks at
-4 workers (~3.8x) and *regresses* at 8 - on an 8-core machine, 8 worker
-threads plus the main thread doing sequential reads/writes oversubscribes
-the available cores, and thread-scheduling and GIL-reacquisition overhead
-starts to outweigh the parallel gain. This is why the CLI's `--workers`
-default is your CPU core count, not an arbitrarily high number - matching
-cores is the sweet spot the data actually shows, not a guess.
+Full measured numbers (throughput by file size/algorithm, memory, and
+`--workers` scaling) live in **[docs/performance.md](docs/performance.md)**,
+reproducible via `benchmarks/benchmark_files.py`. Headline result: XChaCha20-
+Poly1305 benchmarks ~10x slower than AES-256-GCM on hardware with AES
+acceleration, and is still the default - see
+[docs/threat-model.md](docs/threat-model.md#why-xchacha20-poly1305-is-the-default-despite-being-much-slower-here)
+for why. `--workers` gives ~4x measured encrypt throughput at 8 workers on
+an 8-core machine.
 
 ## Limitations and roadmap
 
@@ -221,6 +187,12 @@ cores is the sweet spot the data actually shows, not a guess.
   I/O beyond the OS's own buffering
 - No post-quantum primitives
 - No multi-recipient / key-sharing support
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the dev workflow, and
+[CHANGELOG.md](CHANGELOG.md) for release history. To report a security
+vulnerability, see [SECURITY.md](SECURITY.md) - not a public issue.
 
 ## License
 
