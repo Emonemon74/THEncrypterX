@@ -22,6 +22,7 @@ import typer
 from rich.console import Console
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 
+from app.benchmark import MiB, machine_info_lines, run_benchmark
 from app.core.errors import (
     CancelledError,
     FormatError,
@@ -291,6 +292,63 @@ def inspect(
     )
     console.print(f"salt: {header.salt.hex()}")
     console.print(f"total_chunks: {total_chunks}")
+
+
+@app.command()
+def benchmark(
+    size_mb: int = typer.Option(100, "--size-mb", min=1, help="File size to benchmark, in MB."),
+    workers: list[int] = typer.Option(
+        [1, _DEFAULT_CLI_WORKERS],
+        "--workers",
+        help="Worker counts to compare (repeat the flag for several, e.g. "
+        "--workers 1 --workers 4 --workers 8). Default: 1 and the CPU count.",
+    ),
+    aead: str = typer.Option(
+        "both", "--aead", help="xchacha20, aes256gcm, or both (default)."
+    ),
+    runs: int = typer.Option(
+        3, "--runs", min=1, help="Runs per configuration (median reported)."
+    ),
+) -> None:
+    """Measure real encrypt/decrypt throughput on this machine.
+
+    Generates a temporary random file, encrypts and decrypts it with each
+    algorithm/worker combination, and reports median throughput. Real
+    measurements only - see docs/performance.md for methodology notes and
+    benchmarks/benchmark_files.py for the full Markdown-table sweep used to
+    update that document.
+    """
+    if aead == "both":
+        algo_ids = [ALGO_XCHACHA20_POLY1305, ALGO_AES_256_GCM]
+    elif aead in _AEAD_NAMES:
+        algo_ids = [_AEAD_NAMES[aead]]
+    else:
+        err_console.print(
+            f"[red]Unknown --aead value {aead!r}. Use 'xchacha20', 'aes256gcm', or 'both'.[/red]"
+        )
+        raise typer.Exit(code=EXIT_UNEXPECTED)
+
+    for line in machine_info_lines(runs):
+        console.print(line)
+
+    console.print(f"File size:        {size_mb} MB\n")
+
+    for algo_id in algo_ids:
+        console.print(f"[bold]{_AEAD_LABELS[algo_id]}[/bold]")
+        for worker_count in workers:
+            result = run_benchmark(
+                size_bytes=size_mb * MiB,
+                aead_id=algo_id,
+                chunk_size=DEFAULT_CHUNK_SIZE,
+                runs=runs,
+                workers=worker_count,
+            )
+            console.print(
+                f"  Workers: {worker_count:<4} "
+                f"encrypt {result['encrypt_mb_s']:.1f} MB/s   "
+                f"decrypt {result['decrypt_mb_s']:.1f} MB/s"
+            )
+        console.print("")
 
 
 @app.command()

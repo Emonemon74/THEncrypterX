@@ -208,6 +208,41 @@ def test_verify_tampered_container_fails(tmp_path: Path) -> None:
     assert "INVALID" in result.output
 
 
+# --- benchmark ----------------------------------------------------------------------
+
+
+def test_benchmark_reports_throughput_for_each_worker_count() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "--size-mb",
+            "1",
+            "--runs",
+            "1",
+            "--workers",
+            "1",
+            "--workers",
+            "2",
+            "--aead",
+            "xchacha20",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "xchacha20" in result.output
+    assert "Workers: 1" in result.output
+    assert "Workers: 2" in result.output
+    assert "MB/s" in result.output
+
+
+def test_benchmark_rejects_unknown_aead() -> None:
+    result = runner.invoke(app, ["benchmark", "--size-mb", "1", "--aead", "rot13"])
+
+    assert result.exit_code == EXIT_UNEXPECTED
+    assert "Unknown --aead value" in result.output
+
+
 # --- shred ------------------------------------------------------------------------
 
 
