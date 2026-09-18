@@ -35,6 +35,20 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (cancels the job and lets its own cleanup run, rather than abandoning a
   background thread and any partial temp file).
 
+### Security
+- Fixed a denial-of-service bug found by the existing bit-flip property
+  test: `Argon2Params` (`app/crypto/kdf.py`) had no upper bound on
+  `memory_cost_kib`/`time_cost`/`parallelism`, and those fields are read
+  straight from the (not-yet-authenticated) file header. A single flipped
+  bit could turn `memory_cost_kib` into a huge value, and Argon2id's C
+  implementation won't return control to Python until it finishes trying to
+  allocate/hash that much "memory cost" - not even a timeout can interrupt
+  it mid-call. `decrypt`/`verify` on a corrupted or malicious `.thex` file
+  could hang for a very long time instead of failing parsing fast. Fixed by
+  capping all three params to generous-but-finite ceilings, enforced in
+  `Argon2Params.__post_init__` so every caller (header parsing, the GUI, the
+  library API) is covered. See `docs/threat-model.md`.
+
 ### Fixed
 - Closed a TOCTOU race in `decrypt_file(..., output_path=None)`: the
   auto-derived output path's "refuse to overwrite" check could be beaten by

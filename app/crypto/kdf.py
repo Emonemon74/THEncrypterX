@@ -29,6 +29,20 @@ KEY_LEN = 32
 # with a low memory cost still decrypts correctly anywhere.
 _ENV_MEMORY_KIB = "THEX_ARGON2_MEMORY_KIB"
 
+# Upper bounds on Argon2 params read back out of a .thex header - untrusted
+# input, since the header isn't authenticated until *after* the KDF has
+# already run (the KDF derives the key needed to check the metadata MAC).
+# Without a ceiling, a single flipped bit in memory_cost_kib or time_cost
+# turns "decrypt/verify a corrupted file" into an effectively unbounded
+# Argon2id computation - the C call won't return control to Python (so it
+# can't even be interrupted) until it finishes trying to allocate/hash that
+# much "memory cost". These are generous relative to any real interactive
+# use (RFC 9106 tops out its recommendations in the low GiB / low tens of
+# iterations), not a recommendation for what to actually configure.
+MAX_MEMORY_COST_KIB = 4 * 1024 * 1024  # 4 GiB
+MAX_TIME_COST = 64
+MAX_PARALLELISM = 64
+
 
 @dataclass(frozen=True, slots=True)
 class Argon2Params:
@@ -43,10 +57,16 @@ class Argon2Params:
     def __post_init__(self) -> None:
         if self.memory_cost_kib < 8 * self.parallelism:
             raise ValueError("memory_cost_kib too small for the given parallelism")
+        if self.memory_cost_kib > MAX_MEMORY_COST_KIB:
+            raise ValueError(f"memory_cost_kib exceeds the maximum ({MAX_MEMORY_COST_KIB})")
         if self.time_cost < 1:
             raise ValueError("time_cost must be >= 1")
+        if self.time_cost > MAX_TIME_COST:
+            raise ValueError(f"time_cost exceeds the maximum ({MAX_TIME_COST})")
         if self.parallelism < 1:
             raise ValueError("parallelism must be >= 1")
+        if self.parallelism > MAX_PARALLELISM:
+            raise ValueError(f"parallelism exceeds the maximum ({MAX_PARALLELISM})")
         if self.argon2_type != ARGON2_TYPE_ID:
             raise ValueError("only Argon2id (type=2) is supported")
 

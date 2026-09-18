@@ -131,6 +131,26 @@ def test_nonzero_argon2_reserved_field_rejected() -> None:
         Header.read_from(io.BytesIO(bytes(blob)))
 
 
+def test_absurd_memory_cost_rejected_without_hanging() -> None:
+    """Regression test: memory_cost_kib is read straight from the file and
+    wasn't bounded above, so a single flipped bit turning it into a huge
+    value made the KDF call inside decrypt/verify hang for a very long time
+    on a corrupted or malicious file instead of parsing failing fast (see
+    tests/test_kdf.py::test_oversized_params_from_a_corrupted_header_are_rejected_instantly
+    for the underlying Argon2Params-level test)."""
+    blob = bytearray(make_header().pack())
+    blob[16 : 16 + 4] = (0xFFFFFFFF).to_bytes(4, "little")  # memory_cost_kib
+    with pytest.raises(FormatError, match="invalid KDF params"):
+        Header.read_from(io.BytesIO(bytes(blob)))
+
+
+def test_absurd_time_cost_rejected_without_hanging() -> None:
+    blob = bytearray(make_header().pack())
+    blob[16 + 4 : 16 + 8] = (0xFFFFFFFF).to_bytes(4, "little")  # time_cost
+    with pytest.raises(FormatError, match="invalid KDF params"):
+        Header.read_from(io.BytesIO(bytes(blob)))
+
+
 def test_invalid_argon2_type_in_bytes_rejected() -> None:
     blob = bytearray(make_header().pack())
     blob[16 + 10] = 1  # argon2_type byte -> Argon2i, not supported

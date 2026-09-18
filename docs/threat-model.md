@@ -153,3 +153,17 @@ checks two properties hold for all of them: round-trip correctness, and that
 *any* single-bit flip anywhere in a valid `.thex` file causes a typed failure
 (never a crash, never a silent wrong success). This is broader evidence than
 any fixed list of hand-picked cases can provide on its own.
+
+That property test is what caught a real denial-of-service bug: the header's
+Argon2 `memory_cost_kib`/`time_cost` fields are read straight from the file,
+and the header isn't authenticated until *after* the KDF runs (the KDF
+derives the key needed to check the metadata MAC), so nothing bounded them.
+A single flipped bit could turn `memory_cost_kib` into a huge value, and
+Argon2id's C implementation doesn't return control to Python until it
+finishes trying to allocate/hash that much "memory cost" - not even a
+signal-based watchdog can interrupt it mid-call. `decrypt`/`verify` on a
+corrupted or malicious file would hang for a very long time instead of
+failing parsing fast. Fixed by capping `memory_cost_kib`, `time_cost`, and
+`parallelism` in `Argon2Params.__post_init__` (`app/crypto/kdf.py`) to
+generous-but-finite ceilings, so a corrupted header is rejected during
+parsing before the KDF ever runs.

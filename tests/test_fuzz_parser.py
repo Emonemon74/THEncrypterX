@@ -127,8 +127,14 @@ def test_sealed_section_arbitrary_bytes_never_crash(
         )
 
 
+
+# Unlike _FAST above, this one does real file I/O (and, when an example
+# happens to parse far enough, real Argon2id) via verify_file - a tight
+# deadline here would flag ordinary CI-machine/disk noise as a failure and
+# then burn far more time shrinking that "failing" example than the slow
+# example itself cost (see test_properties.py for the same reasoning).
 _FAST_WITH_TMPDIR = settings(
-    max_examples=300, deadline=200, suppress_health_check=[HealthCheck.function_scoped_fixture]
+    max_examples=300, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
 )
 
 
