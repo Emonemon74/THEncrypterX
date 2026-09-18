@@ -52,12 +52,13 @@ def main() -> None:
     for line in machine_info_lines(args.runs):
         print(line)
 
-    print("## Throughput and memory by file size\n")
+    print("## Throughput, memory, and CPU by file size\n")
     print(
         "| File size | AEAD | Encrypt (s) | Decrypt (s) "
-        "| Encrypt (MB/s) | Decrypt (MB/s) | Peak RSS (MB) |"
+        "| Encrypt (MB/s) | Decrypt (MB/s) | Peak RSS (MB) "
+        "| Encrypt CPU% | Decrypt CPU% |"
     )
-    print("|---:|---|---:|---:|---:|---:|---:|")
+    print("|---:|---|---:|---:|---:|---:|---:|---:|---:|")
     argon2_seconds_seen = []
     for size_mb in sizes_mb:
         for aead_id in algos:
@@ -79,8 +80,11 @@ def main() -> None:
 
     if sweep:
         print("## Chunk-size sweep (500 MB, xchacha20-poly1305)\n")
-        print("| Chunk size | Encrypt (s) | Decrypt (s) | Encrypt (MB/s) | Decrypt (MB/s) |")
-        print("|---:|---:|---:|---:|---:|")
+        print(
+            "| Chunk size | Encrypt (s) | Decrypt (s) | Encrypt (MB/s) | Decrypt (MB/s) "
+            "| Encrypt CPU% | Decrypt CPU% |"
+        )
+        print("|---:|---:|---:|---:|---:|---:|---:|")
         for chunk_kib in (64, 256, 1024, 4096, 16384):
             result = run_benchmark(
                 size_bytes=500 * MiB,

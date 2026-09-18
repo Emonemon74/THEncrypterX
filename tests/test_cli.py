@@ -355,6 +355,30 @@ def test_benchmark_reports_throughput_for_each_worker_count() -> None:
     assert "Workers: 1" in result.output
     assert "Workers: 2" in result.output
     assert "MB/s" in result.output
+    assert "CPU" in result.output
+    assert "peak RSS" in result.output
+
+
+def test_benchmark_respects_custom_chunk_size() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "--size-mb",
+            "1",
+            "--runs",
+            "1",
+            "--workers",
+            "1",
+            "--aead",
+            "xchacha20",
+            "--chunk-size",
+            "65536",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Chunk size:       65536 bytes" in result.output
 
 
 def test_benchmark_rejects_unknown_aead() -> None:

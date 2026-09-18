@@ -68,6 +68,17 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   "Large-file handling" section documents what is and isn't guaranteed,
   including that true resumability is deliberately not implemented (see
   `docs/ROADMAP.md` Phase 7).
+- Advanced benchmarking (roadmap Phase 10): `thencrypterx benchmark` and
+  `benchmarks/benchmark_files.py` now also report CPU utilization
+  (`psutil.Process.cpu_percent`, can read above 100% across multiple
+  cores) alongside throughput and peak memory, plus a new `--chunk-size`
+  option on the CLI command. Re-measured the "Parallel workers" table in
+  `docs/performance.md` with CPU tracking: at `workers=8` on this 8-core
+  machine, CPU climbs to ~690% (using nearly all cores) while throughput
+  scales only ~4.5x - the gap between those two curves is the
+  parallelization overhead (thread scheduling, GIL reacquisition around
+  each AEAD call), made visible for the first time by having both numbers
+  side by side. 6 new tests.
 
 ### Security
 - Fixed a denial-of-service bug found by the existing bit-flip property

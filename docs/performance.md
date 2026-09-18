@@ -52,22 +52,37 @@ by test-harness memory used to generate the random input file - see
 
 ## Parallel workers (`--workers`)
 
-Measured on a 200 MB file, XChaCha20-Poly1305, same 8-core machine:
+Measured on a 200 MB file, XChaCha20-Poly1305, same 8-core machine, median
+of 3 runs, now including CPU utilization (roadmap Phase 10 - `thencrypterx
+benchmark` and `benchmarks/benchmark_files.py` both report this via
+`app.benchmark`'s `psutil.Process.cpu_percent`, which can read above 100%
+once more than one core is in use):
 
-| Workers | Encrypt (MB/s) | Decrypt (MB/s) |
-|---:|---:|---:|
-| 1 | 45.9 | 44.8 |
-| 2 | 78.6 | 80.3 |
-| 4 | 142.5 | 169.9 |
-| 8 | 189.2 | 137.3 |
+| Workers | Encrypt (MB/s) | Decrypt (MB/s) | Encrypt CPU% | Decrypt CPU% | Peak RSS (MB) |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 48.7 | 49.9 | 108% | 109% | 477 |
+| 2 | 95.2 | 95.4 | 215% | 214% | 487 |
+| 4 | 170.4 | 172.9 | 403% | 405% | 500 |
+| 8 | 220.3 | 221.4 | 691% | 695% | 521 |
 
-Encrypt scales close to linearly through 8 workers (~4.1x). Decrypt peaks
-at 4 workers (~3.8x) and *regresses* at 8: on an 8-core machine, 8 worker
-threads plus the main thread doing sequential reads/writes oversubscribes
-the available cores, and thread-scheduling/GIL-reacquisition overhead
-starts to outweigh the parallel gain. This is why the CLI's `--workers`
-default is your CPU core count rather than an arbitrarily high number -
-matching cores is the sweet spot the data shows, not a guess.
+CPU% is the clearest evidence yet that `--workers` is genuinely
+parallelizing, not just reporting faster numbers: it climbs in lockstep
+with throughput, reaching ~690% (using close to all 8 cores at once) at
+`workers=8`. Throughput itself scales sub-linearly past 2 workers (~4.5x
+at 8 workers, not 8x) while CPU usage keeps climbing near-linearly (~6.4x)
+- the gap between those two curves *is* the parallelization overhead
+(thread scheduling, GIL reacquisition around each AEAD call, chunk
+read/write staying on the main thread): more cores get used, but each
+additional core buys less throughput than the last one did. Peak memory
+grows only modestly with worker count (477 MB to 521 MB, +9%) since each
+worker briefly holds one chunk in flight - nowhere near proportional to
+the 8x jump in worker count.
+
+These numbers replace an earlier single-run measurement that didn't track
+CPU% and showed decrypt *regressing* at 8 workers - not reproduced here
+with median-of-3 and full precision; take the general shape (throughput
+scales sub-linearly, more so past 4 workers on this 8-core machine) as the
+finding, not the exact prior numbers.
 
 Parallel workers pipeline chunk-level AEAD calls only - not the Argon2id
 key derivation itself (a fixed cost per operation, ~0.15s at production
@@ -115,6 +130,9 @@ Two real findings, reported as measured rather than smoothed over:
   XChaCha20-Poly1305)
 - Cold-start vs. warm-cache disk I/O effects on very large files
 - Median-of-3 confirmation of the AES-256-GCM throughput drop noted above
+- CPU% for the file-size and chunk-size sweep tables above - those predate
+  CPU tracking being added; only the "Parallel workers" table below has
+  been re-measured with it so far
 
 True resumable encryption/decryption (continuing an interrupted operation
 on a huge file without restarting from scratch) is intentionally not

@@ -11,6 +11,15 @@ thread while each encrypt/decrypt call runs, rather than trusting any single
 snapshot - a true "peak" requires watching continuously, since a spike
 between two manual checks would otherwise be invisible.
 
+CPU utilization is *not* sampled the same way - it's read as a single
+before/after delta via `psutil.Process.cpu_percent`, which measures
+process CPU time consumed over the interval since the last call, divided
+by wall-clock time elapsed (so it can read above 100% when a call uses
+multiple cores at once, e.g. via `--workers`). A polled "instantaneous CPU%"
+the way RSS is polled would be far noisier and wouldn't answer the
+question that actually matters here - "how much of this machine's CPU did
+the whole call use" - any better than the interval-average does.
+
 Every encrypt_file()/decrypt_file() call performs its own Argon2id key
 derivation - that is real behavior, not something this module can subtract
 out without bypassing the actual code path being measured. Argon2id's cost
@@ -50,6 +59,30 @@ MiB = 1024 * 1024
 class RunResult:
     seconds: float
     peak_rss_mb: float
+    cpu_percent: float
+
+
+class _CpuSampler:
+    """Measures average CPU utilization (percent of one core; can exceed
+    100% across multiple cores) over a `with` block, via psutil's
+    since-last-call interval accounting - see the module docstring for why
+    this isn't polled the way RSS is.
+    """
+
+    def __init__(self) -> None:
+        self._process = psutil.Process(os.getpid())
+        self._percent = 0.0
+
+    def __enter__(self) -> _CpuSampler:
+        self._process.cpu_percent(interval=None)  # resets psutil's internal interval clock
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._percent = self._process.cpu_percent(interval=None)
+
+    @property
+    def percent(self) -> float:
+        return self._percent
 
 
 class _PeakRssSampler:
@@ -88,17 +121,20 @@ class _PeakRssSampler:
 
 
 def _time_and_measure(fn: Callable[[], object]) -> RunResult:
-    with _PeakRssSampler() as sampler:
+    with _PeakRssSampler() as rss_sampler, _CpuSampler() as cpu_sampler:
         start = time.perf_counter()
         fn()
         elapsed = time.perf_counter() - start
-    return RunResult(seconds=elapsed, peak_rss_mb=sampler.peak_mb)
+    return RunResult(
+        seconds=elapsed, peak_rss_mb=rss_sampler.peak_mb, cpu_percent=cpu_sampler.percent
+    )
 
 
 def _median(results: list[RunResult]) -> RunResult:
     return RunResult(
         seconds=statistics.median(r.seconds for r in results),
         peak_rss_mb=statistics.median(r.peak_rss_mb for r in results),
+        cpu_percent=statistics.median(r.cpu_percent for r in results),
     )
 
 
@@ -164,13 +200,16 @@ def run_benchmark(
             "decrypt_mb_s": _throughput_mb_s(size_bytes, dec_med.seconds),
             "encrypt_peak_rss_mb": enc_med.peak_rss_mb,
             "decrypt_peak_rss_mb": dec_med.peak_rss_mb,
+            "encrypt_cpu_percent": enc_med.cpu_percent,
+            "decrypt_cpu_percent": dec_med.cpu_percent,
         }
 
 
 def format_size_row(size_label: str, r: dict[str, float | str]) -> str:
     return (
         f"| {size_label} | {r['aead']} | {r['encrypt_seconds']:.3f} | {r['decrypt_seconds']:.3f} "
-        f"| {r['encrypt_mb_s']:.1f} | {r['decrypt_mb_s']:.1f} | {r['encrypt_peak_rss_mb']:.1f} |"
+        f"| {r['encrypt_mb_s']:.1f} | {r['decrypt_mb_s']:.1f} | {r['encrypt_peak_rss_mb']:.1f} "
+        f"| {r['encrypt_cpu_percent']:.0f} | {r['decrypt_cpu_percent']:.0f} |"
     )
 
 
@@ -178,7 +217,8 @@ def format_chunk_row(r: dict[str, float | str]) -> str:
     return (
         f"| {r['chunk_size_kib']:.0f} KiB "
         f"| {r['encrypt_seconds']:.3f} | {r['decrypt_seconds']:.3f} "
-        f"| {r['encrypt_mb_s']:.1f} | {r['decrypt_mb_s']:.1f} |"
+        f"| {r['encrypt_mb_s']:.1f} | {r['decrypt_mb_s']:.1f} "
+        f"| {r['encrypt_cpu_percent']:.0f} | {r['decrypt_cpu_percent']:.0f} |"
     )
 
 

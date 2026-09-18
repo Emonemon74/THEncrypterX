@@ -397,6 +397,9 @@ def keygen(
 @app.command()
 def benchmark(
     size_mb: int = typer.Option(100, "--size-mb", min=1, help="File size to benchmark, in MB."),
+    chunk_size: int = typer.Option(
+        DEFAULT_CHUNK_SIZE, "--chunk-size", help="Plaintext bytes per chunk."
+    ),
     workers: list[int] = typer.Option(
         [1, _DEFAULT_CLI_WORKERS],
         "--workers",
@@ -406,13 +409,14 @@ def benchmark(
     aead: str = typer.Option("both", "--aead", help="xchacha20, aes256gcm, or both (default)."),
     runs: int = typer.Option(3, "--runs", min=1, help="Runs per configuration (median reported)."),
 ) -> None:
-    """Measure real encrypt/decrypt throughput on this machine.
+    """Measure real encrypt/decrypt throughput, peak memory, and CPU
+    utilization on this machine.
 
     Generates a temporary random file, encrypts and decrypts it with each
-    algorithm/worker combination, and reports median throughput. Real
+    algorithm/worker combination, and reports median results. Real
     measurements only - see docs/performance.md for methodology notes and
-    benchmarks/benchmark_files.py for the full Markdown-table sweep used to
-    update that document.
+    benchmarks/benchmark_files.py for the full Markdown-table sweep (also
+    including a chunk-size sweep) used to update that document.
     """
     if aead == "both":
         algo_ids = [ALGO_XCHACHA20_POLY1305, ALGO_AES_256_GCM]
@@ -427,7 +431,8 @@ def benchmark(
     for line in machine_info_lines(runs):
         console.print(line)
 
-    console.print(f"File size:        {size_mb} MB\n")
+    console.print(f"File size:        {size_mb} MB")
+    console.print(f"Chunk size:       {chunk_size} bytes\n")
 
     for algo_id in algo_ids:
         console.print(f"[bold]{_AEAD_LABELS[algo_id]}[/bold]")
@@ -435,14 +440,20 @@ def benchmark(
             result = run_benchmark(
                 size_bytes=size_mb * MiB,
                 aead_id=algo_id,
-                chunk_size=DEFAULT_CHUNK_SIZE,
+                chunk_size=chunk_size,
                 runs=runs,
                 workers=worker_count,
             )
+            console.print(f"  Workers: {worker_count}")
             console.print(
-                f"  Workers: {worker_count:<4} "
-                f"encrypt {result['encrypt_mb_s']:.1f} MB/s   "
-                f"decrypt {result['decrypt_mb_s']:.1f} MB/s"
+                f"    encrypt   {result['encrypt_mb_s']:6.1f} MB/s   "
+                f"CPU {result['encrypt_cpu_percent']:4.0f}%   "
+                f"peak RSS {result['encrypt_peak_rss_mb']:6.1f} MB"
+            )
+            console.print(
+                f"    decrypt   {result['decrypt_mb_s']:6.1f} MB/s   "
+                f"CPU {result['decrypt_cpu_percent']:4.0f}%   "
+                f"peak RSS {result['decrypt_peak_rss_mb']:6.1f} MB"
             )
         console.print("")
 
