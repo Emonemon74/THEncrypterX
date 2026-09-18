@@ -27,14 +27,14 @@ from app.core.errors import CancelledError, ThexError
 from app.core.progress import CancellationToken, Progress
 from app.core.service import DecryptJob, EncryptJob
 from app.crypto.cipher import ALGO_XCHACHA20_POLY1305
-from app.files.encrypt import DEFAULT_CHUNK_SIZE
+from app.files.encrypt import DEFAULT_CHUNK_SIZE, DEFAULT_WORKERS
 from app.metadata.metadata import FileMetadata
 
 
 class EncryptWorker(QThread):
     """Runs one EncryptJob on a background thread."""
 
-    progress = Signal(float)  # 0.0-1.0
+    progress = Signal(object)  # Progress (bytes_done, bytes_total)
     finished_ok = Signal(str)  # output path
     failed = Signal(str)  # user-facing error message
     cancelled = Signal()
@@ -47,11 +47,17 @@ class EncryptWorker(QThread):
         *,
         aead_id: int = ALGO_XCHACHA20_POLY1305,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
+        workers: int = DEFAULT_WORKERS,
         parent: QThread | None = None,
     ) -> None:
         super().__init__(parent)
         self._job = EncryptJob(
-            Path(input_path), Path(output_path), password, aead_id=aead_id, chunk_size=chunk_size
+            Path(input_path),
+            Path(output_path),
+            password,
+            aead_id=aead_id,
+            chunk_size=chunk_size,
+            workers=workers,
         )
         self._cancel_token = CancellationToken()
         self._output_path = str(output_path)
@@ -62,7 +68,7 @@ class EncryptWorker(QThread):
 
     def run(self) -> None:
         def on_progress(p: Progress) -> None:
-            self.progress.emit(p.fraction)
+            self.progress.emit(p)
 
         try:
             self._job.run(on_progress=on_progress, cancel_token=self._cancel_token)
@@ -77,7 +83,7 @@ class EncryptWorker(QThread):
 class DecryptWorker(QThread):
     """Runs one DecryptJob on a background thread."""
 
-    progress = Signal(float)
+    progress = Signal(object)  # Progress (bytes_done, bytes_total)
     finished_ok = Signal(object)  # FileMetadata
     failed = Signal(str)
     cancelled = Signal()
@@ -88,11 +94,15 @@ class DecryptWorker(QThread):
         output_path: str | os.PathLike[str] | None,
         password: str,
         *,
+        workers: int = DEFAULT_WORKERS,
         parent: QThread | None = None,
     ) -> None:
         super().__init__(parent)
         self._job = DecryptJob(
-            Path(input_path), Path(output_path) if output_path else None, password
+            Path(input_path),
+            Path(output_path) if output_path else None,
+            password,
+            workers=workers,
         )
         self._cancel_token = CancellationToken()
 
@@ -101,7 +111,7 @@ class DecryptWorker(QThread):
 
     def run(self) -> None:
         def on_progress(p: Progress) -> None:
-            self.progress.emit(p.fraction)
+            self.progress.emit(p)
 
         try:
             metadata: FileMetadata = self._job.run(

@@ -8,6 +8,7 @@ via the `no_blocking_dialogs` fixture.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -233,6 +234,156 @@ def test_encrypt_click_starts_a_worker_synchronously(qtbot: QtBot, tmp_path: Pat
     qtbot.mouseClick(window.encrypt_button, mw.Qt.MouseButton.LeftButton)
 
     assert window._worker is not None
+    _wait_for_job(qtbot, window)
+
+
+def test_algorithm_choice_is_passed_to_the_worker(qtbot: QtBot, tmp_path: Path) -> None:
+    from app.crypto.cipher import ALGO_AES_256_GCM
+    from app.format.header import Header
+
+    src = tmp_path / "doc.txt"
+    src.write_bytes(b"data")
+    window = mw.MainWindow()
+    qtbot.addWidget(window)
+    window._set_selected_file(src)
+    window.password_edit.setText("pw")
+    window.algo_combo.setCurrentText("AES-256-GCM (faster, less nonce headroom)")
+
+    qtbot.mouseClick(window.encrypt_button, mw.Qt.MouseButton.LeftButton)
+    _wait_for_job(qtbot, window)
+
+    out = tmp_path / "doc.txt.thex"
+    with out.open("rb") as f:
+        header = Header.read_from(f)
+    assert header.aead_id == ALGO_AES_256_GCM
+
+
+def test_chunk_size_choice_is_passed_to_the_worker(qtbot: QtBot, tmp_path: Path) -> None:
+    from app.format.header import Header
+
+    src = tmp_path / "doc.txt"
+    src.write_bytes(b"data")
+    window = mw.MainWindow()
+    qtbot.addWidget(window)
+    window._set_selected_file(src)
+    window.password_edit.setText("pw")
+    window.chunk_size_combo.setCurrentText("1 MiB")
+
+    qtbot.mouseClick(window.encrypt_button, mw.Qt.MouseButton.LeftButton)
+    _wait_for_job(qtbot, window)
+
+    out = tmp_path / "doc.txt.thex"
+    with out.open("rb") as f:
+        header = Header.read_from(f)
+    assert header.chunk_size == 1024 * 1024
+
+
+def test_settings_combos_disabled_while_busy_and_re_enabled_after(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    src = tmp_path / "in.bin"
+    src.write_bytes(os.urandom(500_000))
+    out = tmp_path / "out.thex"
+
+    window = mw.MainWindow()
+    qtbot.addWidget(window)
+    worker = mw.EncryptWorker(src, out, "pw", chunk_size=16)
+    worker.finished_ok.connect(window._on_encrypt_finished)
+    window._start_worker(worker)
+
+    assert not window.algo_combo.isEnabled()
+    assert not window.workers_combo.isEnabled()
+
+    _wait_for_job(qtbot, window)
+
+    assert window.algo_combo.isEnabled()
+    assert window.workers_combo.isEnabled()
+
+
+def test_progress_detail_shows_throughput_and_eta_during_a_job(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    from app.core.progress import Progress
+
+    window = mw.MainWindow()
+    qtbot.addWidget(window)
+    window._job_started_at = time.monotonic() - 1.0
+
+    window._on_progress(Progress(bytes_done=1_000_000, bytes_total=10_000_000))
+
+    detail = window.progress_detail_label.text()
+    assert "MB/s" in detail or "KB/s" in detail
+    assert "ETA" in detail
+
+
+def test_progress_detail_cleared_when_job_finishes(qtbot: QtBot, tmp_path: Path) -> None:
+    from app.core.progress import Progress
+
+    window = mw.MainWindow()
+    qtbot.addWidget(window)
+    window._job_started_at = time.monotonic() - 1.0
+    window._on_progress(Progress(bytes_done=1_000_000, bytes_total=10_000_000))
+    assert window.progress_detail_label.text() != ""
+
+    window._finish_job()
+
+    assert window.progress_detail_label.text() == ""
+
+
+def test_close_with_no_job_running_accepts_immediately(qtbot: QtBot) -> None:
+    window = mw.MainWindow()
+    qtbot.addWidget(window)
+    event = mw.QCloseEvent()
+
+    window.closeEvent(event)
+
+    assert event.isAccepted()
+
+
+def test_close_while_running_prompts_and_cancels_on_yes(
+    qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "in.bin"
+    src.write_bytes(os.urandom(2_000_000))
+    out = tmp_path / "out.thex"
+
+    window = mw.MainWindow()
+    qtbot.addWidget(window)
+    worker = mw.EncryptWorker(src, out, "pw", chunk_size=16)
+    worker.finished_ok.connect(window._on_encrypt_finished)
+    window._start_worker(worker)
+
+    monkeypatch.setattr(
+        mw.QMessageBox, "question", lambda *a, **k: mw.QMessageBox.StandardButton.Yes
+    )
+    event = mw.QCloseEvent()
+    window.closeEvent(event)
+
+    assert event.isAccepted()
+    assert not out.exists()
+
+
+def test_close_while_running_prompts_and_stays_open_on_no(
+    qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "in.bin"
+    src.write_bytes(os.urandom(2_000_000))
+    out = tmp_path / "out.thex"
+
+    window = mw.MainWindow()
+    qtbot.addWidget(window)
+    worker = mw.EncryptWorker(src, out, "pw", chunk_size=16)
+    worker.finished_ok.connect(window._on_encrypt_finished)
+    window._start_worker(worker)
+
+    monkeypatch.setattr(
+        mw.QMessageBox, "question", lambda *a, **k: mw.QMessageBox.StandardButton.No
+    )
+    event = mw.QCloseEvent()
+    window.closeEvent(event)
+
+    assert not event.isAccepted()
+    window._worker.cancel()  # type: ignore[union-attr]
     _wait_for_job(qtbot, window)
 
 

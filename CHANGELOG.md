@@ -24,6 +24,16 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and a targeted regression test confirming extreme length fields
   (near u32/u64 max) fail fast without over-allocating. 10 new tests,
   318 total
+- `thencrypterx benchmark` CLI command: measures real encrypt/decrypt
+  throughput on this machine across algorithms and worker counts, without
+  needing to run the standalone `benchmarks/benchmark_files.py` script.
+  The shared measurement core moved to `app/benchmark.py` so both the CLI
+  command and the standalone Markdown-sweep script use the same code.
+- Desktop GUI: algorithm selector, chunk-size selector, and worker-count
+  selector for encryption; live throughput/ETA display during a job; a
+  confirmation prompt when closing the window while a job is running
+  (cancels the job and lets its own cleanup run, rather than abandoning a
+  background thread and any partial temp file).
 
 ### Fixed
 - Closed a TOCTOU race in `decrypt_file(..., output_path=None)`: the
