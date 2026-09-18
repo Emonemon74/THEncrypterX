@@ -1,0 +1,62 @@
+name: Deploy web demo to GitHub Pages
+
+# Publishes web/ (the standalone client-side encryption demo, roadmap Step
+# 12 - see web/README.md) to GitHub Pages as a static site. Runs the same
+# lint/build/test steps as the `web` job in ci.yml before publishing
+# anything - a broken build never reaches Pages - then re-builds with the
+# GitHub Pages base path (vite.config.ts: /THEncrypterX/) and uploads
+# web/dist as the Pages artifact.
+#
+# Only web/ is published - nothing from the Python package, docs/, or the
+# rest of the repository is part of this site.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time; a newer push supersedes an
+# in-flight one rather than queuing behind it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --legacy-peer-deps
+      - run: npm run lint
+      - run: npm test -- run
+      - run: npm run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

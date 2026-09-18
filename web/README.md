@@ -12,6 +12,10 @@ roadmap's full vision - see "Why this isn't the `.thex` format" below.
 
 ## Try it
 
+Live at **https://emonemon74.github.io/THEncrypterX/** (deployed
+automatically from `main` by `.github/workflows/deploy-pages.yml`
+whenever `web/` changes), or run it locally:
+
 ```bash
 npm install
 npm run dev       # http://localhost:5173

@@ -95,6 +95,15 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   tests (roundtrip, wrong password, tampered ciphertext/header, malformed
   input). New `web` job in `.github/workflows/ci.yml` (Node 22, lint +
   build + test).
+- Deployed the web demo to GitHub Pages:
+  **https://emonemon74.github.io/THEncrypterX/**. New
+  `.github/workflows/deploy-pages.yml` builds and publishes `web/` on
+  every push to `main` that touches it (lint + test + build gate first,
+  same as the `web` CI job, before anything reaches Pages). Pages enabled
+  on the repo with GitHub Actions as the build source. `vite.config.ts`
+  sets the production base path to `/THEncrypterX/` (a project-page
+  subpath, not a root user/org page) while keeping local `npm run dev`
+  served from `/`.
 
 ### Security
 - Fixed a denial-of-service bug found by the existing bit-flip property

@@ -158,6 +158,8 @@ print(metadata.original_name, metadata.original_size)
 
 ### Web (optional, standalone demo)
 
+Live at **https://emonemon74.github.io/THEncrypterX/**, or run locally:
+
 ```bash
 cd web && npm install && npm run dev
 ```
