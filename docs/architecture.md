@@ -67,6 +67,7 @@ that does, `gui/workers.py`).
 | `app/files/stream.py` | `iter_chunks` (bounded-memory read-ahead), `atomic_writer` (temp file + fsync + `os.replace`) | - |
 | `app/files/encrypt.py` | Orchestrates header + metadata + chunk loop → `.thex`, streaming | everything above |
 | `app/files/decrypt.py` | Reverse of `encrypt.py`, fail-closed at every step, optional metadata-derived output name | everything above |
+| `app/files/verify.py` | `verify_file`: reuses `decrypt.py`'s chunk-authentication loops against a discard sink - authenticates everything, writes nothing | `app.files.decrypt` |
 | `app/files/shred.py` | Best-effort overwrite-then-delete | - |
 | `app/core/errors.py` | Typed exception hierarchy (`ThexError` and subtypes) shared by every layer | - |
 | `app/core/progress.py` | `Progress` value object, thread-safe `CancellationToken` | `app.core.errors` |

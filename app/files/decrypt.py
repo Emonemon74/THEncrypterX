@@ -19,7 +19,7 @@ import os
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Protocol
 
 from app.core.errors import (
     AuthenticationError,
@@ -44,9 +44,19 @@ from app.format.header import Header
 from app.metadata.metadata import FileMetadata, deserialize
 
 
+class WriteSink(Protocol):
+    """The only thing the chunk-decrypt loops need from their output: a
+    place to hand each chunk's plaintext bytes. A real file object
+    satisfies this structurally; so does app.files.verify's discard sink,
+    which authenticates every chunk without persisting any of them.
+    """
+
+    def write(self, data: bytes, /) -> object: ...
+
+
 def _decrypt_chunks_sequential(
     inp: BinaryIO,
-    out: BinaryIO,
+    out: WriteSink,
     aead_id: int,
     data_key: bytes,
     ad_header: bytes,
@@ -74,7 +84,7 @@ def _decrypt_chunks_sequential(
 
 def _decrypt_chunks_parallel(
     inp: BinaryIO,
-    out: BinaryIO,
+    out: WriteSink,
     aead_id: int,
     data_key: bytes,
     ad_header: bytes,

@@ -11,6 +11,13 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `SECURITY.md`, `CHANGELOG.md`, `CONTRIBUTING.md`
 - `docs/cryptography.md`, `docs/security.md`, `docs/performance.md`,
   `docs/development.md`
+- `thencrypterx verify` CLI command and `app.files.verify.verify_file`:
+  authenticates a container's header, metadata, and every chunk without
+  writing any plaintext anywhere. Reuses `decrypt.py`'s chunk-
+  authentication loops against a discard sink, so it's the same
+  authentication path as `decrypt`, not a separate reimplementation.
+  22 new tests (`tests/test_verify.py` plus CLI coverage in
+  `tests/test_cli.py`)
 
 ### Fixed
 - Closed a TOCTOU race in `decrypt_file(..., output_path=None)`: the

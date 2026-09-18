@@ -19,6 +19,7 @@ from app.crypto.cipher import ALGO_XCHACHA20_POLY1305
 from app.crypto.kdf import Argon2Params
 from app.files.decrypt import decrypt_file
 from app.files.encrypt import DEFAULT_CHUNK_SIZE, DEFAULT_WORKERS, encrypt_file
+from app.files.verify import VerifyResult, verify_file
 from app.format.container import read_footer_at_end
 from app.format.header import Header
 from app.metadata.metadata import FileMetadata
@@ -88,6 +89,30 @@ class DecryptJob:
         return decrypt_file(
             self.input_path,
             self.output_path,
+            self.password,
+            progress_cb=_bridge(on_progress, cancel_token),
+            workers=self.workers,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class VerifyJob:
+    """Authenticate `input_path` in full - header, metadata, every chunk -
+    without writing plaintext anywhere. See app.files.verify.verify_file.
+    """
+
+    input_path: str | os.PathLike[str]
+    password: str
+    workers: int = DEFAULT_WORKERS
+
+    def run(
+        self,
+        *,
+        on_progress: ProgressCallback | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> VerifyResult:
+        return verify_file(
+            self.input_path,
             self.password,
             progress_cb=_bridge(on_progress, cancel_token),
             workers=self.workers,

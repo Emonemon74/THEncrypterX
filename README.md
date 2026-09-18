@@ -7,13 +7,14 @@ CLI (`typer`) and a desktop GUI (PySide6).
 ```bash
 thencrypterx encrypt document.pdf
 thencrypterx decrypt document.pdf.thex
+thencrypterx verify document.pdf.thex
 thencrypterx inspect document.pdf.thex
 ```
 
 ## Status
 
 Feature-complete against the [build guide](THEncrypterX_Build_Guide.md)'s v1
-scope. 284 tests passing, CI green on Linux/macOS/Windows × Python 3.12/3.13.
+scope. 308 tests passing, CI green on Linux/macOS/Windows × Python 3.12/3.13.
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for planned post-v1.0 work.
 
 ## Features
@@ -40,9 +41,13 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for planned post-v1.0 work.
   hidden inside the container, never shown before authentication succeeds
 - **Atomic writes**: output is only created/replaced if the whole operation
   succeeds; a crash, exception, or cancellation never leaves a partial file
-- **CLI**: `encrypt` / `decrypt` / `inspect` / `shred`, with password
-  sourcing via environment variable, file, or a no-echo prompt - never a
-  plain command-line flag
+- **CLI**: `encrypt` / `decrypt` / `verify` / `inspect` / `shred`, with
+  password sourcing via environment variable, file, or a no-echo prompt -
+  never a plain command-line flag
+- **Integrity verification** (`verify`): authenticates a container's header,
+  metadata, and every chunk without writing any plaintext anywhere - for
+  confirming a backup or transferred file is intact without decrypting it
+  to disk
 - **GUI**: drag-and-drop, a responsive window (encryption runs on a
   background thread), live progress, and a working Cancel button
 - **Best-effort secure deletion** (`shred`), honestly documented as
@@ -93,6 +98,10 @@ thencrypterx encrypt large-video.mp4 --workers 8
 # Decrypt (default output name comes from the encrypted metadata)
 thencrypterx decrypt document.pdf.thex
 thencrypterx decrypt document.pdf.thex -o restored.pdf
+
+# Verify a container is intact - authenticates everything, writes nothing;
+# needs the password (unlike inspect, since this proves nothing was tampered with)
+thencrypterx verify document.pdf.thex
 
 # Inspect a container's header - no password needed, nothing inside is read
 thencrypterx inspect document.pdf.thex
@@ -146,7 +155,7 @@ pytest                    # full suite, ~1-5s
 pytest tests/test_security.py -v   # the 22-case tamper matrix
 ```
 
-Test suite breakdown (284 tests total):
+Test suite breakdown (308 tests total):
 
 | Category | File(s) | What it proves |
 |---|---|---|
@@ -155,6 +164,7 @@ Test suite breakdown (284 tests total):
 | Metadata | `test_metadata.py` | Serialization, path-traversal-safe filename sanitization |
 | File I/O | `test_files_stream.py`, `test_files_encrypt.py`, `test_files_decrypt.py` | Chunking, atomic writes, full encrypt/decrypt round trips |
 | Security matrix | `test_security.py` | 22 documented attack scenarios, each with an expected typed failure |
+| Integrity verification | `test_verify.py` | `verify_file` authenticates without writing plaintext; mirrors the tamper matrix against `verify` instead of `decrypt` |
 | Property-based | `test_properties.py` | Round-trip and "any single-bit flip is caught" across hundreds of generated inputs (Hypothesis) |
 | Known-answer vector | `test_kat.py` | A frozen container that must always decode identically - a compatibility guardrail |
 | CLI / core / GUI | `test_cli.py`, `test_core_*.py`, `test_gui_main_window.py` | Argument handling and exit codes, job/progress/cancellation wiring, the PySide6 window (headless, `pytest-qt`) |

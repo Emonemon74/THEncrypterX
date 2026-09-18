@@ -34,6 +34,7 @@ from app.crypto.cipher import ALGO_AES_256_GCM, ALGO_XCHACHA20_POLY1305
 from app.files.decrypt import decrypt_file
 from app.files.encrypt import DEFAULT_AEAD_ID, DEFAULT_CHUNK_SIZE, encrypt_file
 from app.files.shred import shred_file
+from app.files.verify import verify_file
 from app.format.container import read_footer_at_end
 from app.format.header import Header
 
@@ -209,6 +210,60 @@ def decrypt(
 
     shown_output = output if output is not None else input_file.parent / metadata.original_name
     console.print(f"[green]Decrypted[/green] -> {shown_output}")
+
+
+@app.command()
+def verify(
+    input_file: Path = typer.Argument(..., exists=True, readable=True, help="A .thex file."),
+    workers: int = typer.Option(
+        _DEFAULT_CLI_WORKERS,
+        "--workers",
+        min=1,
+        help="Chunks to authenticate concurrently (default: CPU count).",
+    ),
+    password_file: Path | None = typer.Option(
+        None, "--password-file", help="Read the password from this file's first line."
+    ),
+) -> None:
+    """Authenticate a .thex container's header, metadata, and every chunk -
+    without writing any plaintext anywhere. Needs the password: confirming a
+    container is genuinely intact requires the key that proves it."""
+    password = _resolve_password(password_file, "Password", confirm=False)
+
+    try:
+        with _make_progress() as progress:
+            task = progress.add_task("Verifying", total=1)
+            started = {"value": False}
+
+            def on_progress(done: int, total: int) -> None:
+                if not started["value"]:
+                    progress.update(task, total=total or 1)
+                    started["value"] = True
+                progress.update(task, completed=done)
+
+            result = verify_file(input_file, password, progress_cb=on_progress, workers=workers)
+    except KeyboardInterrupt:
+        err_console.print("[yellow]Cancelled.[/yellow]")
+        raise typer.Exit(code=EXIT_CANCELLED) from None
+    except WrongPasswordError:
+        console.print("Container:        [red]INVALID[/red]")
+        console.print("Metadata:         [red]FAILED[/red] (wrong password, or tampered)")
+        err_console.print("[red]Wrong password or corrupted file.[/red]")
+        raise typer.Exit(code=EXIT_WRONG_PASSWORD) from None
+    except ThexError as exc:
+        console.print("Container:        [red]INVALID[/red]")
+        console.print(f"Integrity:        [red]FAILED[/red] ({exc})")
+        raise typer.Exit(code=_exit_code_for(exc)) from None
+
+    aead_label = _AEAD_LABELS.get(result.aead_id, f"unknown({result.aead_id})")
+    console.print("Container:        [green]VALID[/green]")
+    console.print(f"Format version:   {result.format_version}")
+    console.print(f"Algorithm:        {aead_label}")
+    console.print(f"Chunks:           {result.total_chunks}")
+    console.print(f"Original size:    {result.original_size} bytes")
+    console.print("Metadata:         [green]VALID[/green]")
+    console.print("Authentication:   [green]VALID[/green]")
+    console.print("Integrity:        [green]PASS[/green]")
 
 
 @app.command()

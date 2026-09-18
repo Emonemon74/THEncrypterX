@@ -172,6 +172,42 @@ def test_inspect_bad_file_fails_cleanly(tmp_path: Path) -> None:
     assert result.exit_code != 0
 
 
+# --- verify -----------------------------------------------------------------------
+
+
+def test_verify_valid_container_passes(tmp_path: Path) -> None:
+    enc = _encrypt_via_cli(tmp_path, "report.txt", b"secret report", "pw")
+
+    result = runner.invoke(app, ["verify", str(enc)], input="pw\n")
+
+    assert result.exit_code == 0, result.output
+    assert "Container:" in result.output and "VALID" in result.output
+    assert "Integrity:" in result.output and "PASS" in result.output
+    # verify never writes plaintext - only the source + the .thex exist.
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["report.txt", "report.txt.thex"]
+
+
+def test_verify_wrong_password_fails(tmp_path: Path) -> None:
+    enc = _encrypt_via_cli(tmp_path, "report.txt", b"secret", "right-pw")
+
+    result = runner.invoke(app, ["verify", str(enc)], input="wrong-pw\n")
+
+    assert result.exit_code == EXIT_WRONG_PASSWORD
+    assert "INVALID" in result.output
+
+
+def test_verify_tampered_container_fails(tmp_path: Path) -> None:
+    enc = _encrypt_via_cli(tmp_path, "report.txt", os.urandom(2000), "pw")
+    raw = bytearray(enc.read_bytes())
+    raw[-40] ^= 0x01  # inside a chunk's ciphertext/tag, not the footer
+    enc.write_bytes(bytes(raw))
+
+    result = runner.invoke(app, ["verify", str(enc)], input="pw\n")
+
+    assert result.exit_code != 0
+    assert "INVALID" in result.output
+
+
 # --- shred ------------------------------------------------------------------------
 
 
