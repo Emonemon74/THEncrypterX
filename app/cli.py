@@ -303,12 +303,8 @@ def benchmark(
         help="Worker counts to compare (repeat the flag for several, e.g. "
         "--workers 1 --workers 4 --workers 8). Default: 1 and the CPU count.",
     ),
-    aead: str = typer.Option(
-        "both", "--aead", help="xchacha20, aes256gcm, or both (default)."
-    ),
-    runs: int = typer.Option(
-        3, "--runs", min=1, help="Runs per configuration (median reported)."
-    ),
+    aead: str = typer.Option("both", "--aead", help="xchacha20, aes256gcm, or both (default)."),
+    runs: int = typer.Option(3, "--runs", min=1, help="Runs per configuration (median reported)."),
 ) -> None:
     """Measure real encrypt/decrypt throughput on this machine.
 

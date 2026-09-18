@@ -323,9 +323,7 @@ class MainWindow(QMainWindow):
             return
 
         self.status_label.setText("Decrypting...")
-        worker = DecryptWorker(
-            src, self._output_path, password, workers=self._selected_workers()
-        )
+        worker = DecryptWorker(src, self._output_path, password, workers=self._selected_workers())
         worker.finished_ok.connect(self._on_decrypt_finished)
         self._start_worker(worker)
 

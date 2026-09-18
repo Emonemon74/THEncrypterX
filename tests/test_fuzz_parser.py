@@ -127,7 +127,6 @@ def test_sealed_section_arbitrary_bytes_never_crash(
         )
 
 
-
 # Unlike _FAST above, this one does real file I/O (and, when an example
 # happens to parse far enough, real Argon2id) via verify_file - a tight
 # deadline here would flag ordinary CI-machine/disk noise as a failure and
