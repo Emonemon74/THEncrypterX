@@ -28,6 +28,7 @@ dev = [
     "mypy>=1.11",
     "types-psutil>=6.0",
 ]
+build = ["pyinstaller>=6.10"]
 
 [project.scripts]
 thencrypterx = "app.cli:app"

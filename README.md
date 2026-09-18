@@ -82,6 +82,14 @@ pip install -r requirements-dev.txt
 `requirements.txt` covers the CLI only; `requirements-dev.txt` adds the GUI
 (PySide6) and everything needed to run the tests.
 
+### Standalone desktop app (no Python required)
+
+Tagged releases publish a packaged desktop GUI for Linux, macOS, and
+Windows, built by `.github/workflows/release.yml` - see the repo's
+[Releases page](https://github.com/Emonemon74/THEncrypterX/releases). To
+build one yourself instead, see "Building a standalone executable" in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## Usage
 
 ### CLI

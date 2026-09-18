@@ -1,0 +1,115 @@
+name: Release
+
+# Builds standalone desktop-GUI executables (roadmap Phase 12) for Linux,
+# macOS, and Windows and attaches them to a GitHub Release (roadmap
+# Phase 13). Triggered by pushing a version tag:
+#
+#     git tag v1.1.0
+#     git push origin v1.1.0
+#
+# workflow_dispatch lets the pipeline be exercised by hand (Actions tab ->
+# Run workflow) without needing to cut a real tag/release first - it still
+# builds and uploads artifacts, it just doesn't publish a Release unless a
+# tag triggered it (see the `release` job's `if`).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # Full test suite on all three platforms is the release gate: a build
+  # only proceeds if the exact commit being tagged is genuinely green
+  # everywhere, not just on whichever OS happened to be used to cut the tag.
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      THEX_ARGON2_MEMORY_KIB: "65536"
+      QT_QPA_PLATFORM: "offscreen"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -vv
+
+  build:
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset_name: THEncrypterX-linux-x86_64.zip
+          - os: macos-latest
+            asset_name: THEncrypterX-macos-arm64.zip
+          - os: windows-latest
+            asset_name: THEncrypterX-windows-x86_64.zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[gui,build]"
+      - run: pyinstaller packaging/THEncrypterX.spec
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd dist
+          zip -r "../${{ matrix.asset_name }}" THEncrypterX
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd dist
+          zip -r "../${{ matrix.asset_name }}" THEncrypterX.app
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/THEncrypterX -DestinationPath ${{ matrix.asset_name }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Flatten artifacts into one directory
+        run: |
+          mkdir release-assets
+          find artifacts -type f -name "*.zip" -exec cp {} release-assets/ \;
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*.zip
+          generate_release_notes: true
+          # v1.0 (the initial tag) predates this pipeline and was published
+          # manually - this only marks releases *this workflow* creates as
+          # drafts pending a manual look, never auto-publishing silently.
+          draft: true

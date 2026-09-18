@@ -24,6 +24,7 @@ app/
 tests/          # mirrors app/ roughly 1:1, plus test_security.py, test_properties.py, test_kat.py
 benchmarks/     # benchmark_files.py - throughput/memory/chunk-size measurements
 scripts/        # generate_kat.py - regenerates the frozen known-answer test vector
+packaging/      # PyInstaller spec for the standalone desktop-GUI build
 docs/           # architecture, cryptography/threat-model, file-format, performance, this file
 ```
 

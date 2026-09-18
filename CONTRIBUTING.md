@@ -68,6 +68,39 @@ present them as your own environment's results. If you change anything in
 the crypto or file-processing path, re-run the benchmark and update the
 numbers with what you actually measured.
 
+## Building a standalone executable
+
+```bash
+pip install -e ".[gui,build]"
+pyinstaller packaging/THEncrypterX.spec
+```
+
+Produces `dist/THEncrypterX.app` (macOS) or `dist/THEncrypterX/` (Linux/
+Windows) - a onedir bundle, not `--onefile`: faster startup, at the cost of
+being a folder instead of a single file (see `packaging/THEncrypterX.spec`
+for why, and why UPX compression is off). This packages the desktop GUI
+(`main.py`) only; the CLI is distributed through `pip install`, not as a
+standalone binary, since anyone running it from a terminal already has
+Python.
+
+`.github/workflows/release.yml` builds this on Linux/macOS/Windows and
+attaches zipped artifacts to a draft GitHub Release whenever a `v*` tag is
+pushed:
+
+```bash
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+The `test` job in that workflow re-runs the full suite on all three
+platforms first and gates the build on it - a release is never built from a
+commit that hasn't just been proven green everywhere. The release itself is
+created as a **draft**, not auto-published; someone reviews the generated
+notes and attached binaries before clicking Publish. You can also trigger
+the workflow by hand (Actions tab -> Release -> Run workflow) to test the
+build/upload steps without cutting a real tag - manual runs still build and
+upload artifacts, they just don't create a release.
+
 ## Regenerating the known-answer test vector
 
 `tests/test_kat.py` checks a frozen `.thex` file
