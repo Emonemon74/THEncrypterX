@@ -32,7 +32,13 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import BinaryIO
 
-from app.crypto.cipher import ALGO_AES_256_GCM, ALGO_XCHACHA20_POLY1305, nonce_size, seal
+from app.crypto.cipher import (
+    ALGO_AES_256_GCM,
+    ALGO_XCHACHA20_POLY1305,
+    nonce_size,
+    seal,
+    tag_size,
+)
 from app.crypto.kdf import (
     Argon2Params,
     default_params,
@@ -41,8 +47,8 @@ from app.crypto.kdf import (
     generate_salt,
 )
 from app.crypto.keys import derive_subkeys
-from app.files.stream import atomic_writer, iter_chunks
-from app.format.constants import KDF_ID_ARGON2ID, KDF_ID_KEYFILE
+from app.files.stream import atomic_writer, check_disk_space, iter_chunks
+from app.format.constants import FOOTER_LEN, KDF_ID_ARGON2ID, KDF_ID_KEYFILE, SECTION_LEN_FIELD_SIZE
 from app.format.container import (
     chunk_associated_data,
     write_footer,
@@ -235,6 +241,23 @@ def encrypt_file(
 
     aes_gcm_prefix = os.urandom(4) if aead_id == ALGO_AES_256_GCM else b""
     total_size = metadata.original_size
+
+    # Fail in milliseconds, not partway through writing a multi-gigabyte
+    # file - see app.files.stream.check_disk_space. Estimate, not an exact
+    # byte count: header + per-chunk framing overhead (nonce + length prefix
+    # + AEAD tag, once per chunk) + a generous margin for the metadata
+    # section (actual size depends on the filename's length) + the footer.
+    frame_overhead = nonce_size(aead_id) + SECTION_LEN_FIELD_SIZE + tag_size(aead_id)
+    estimated_chunks = max(1, -(-total_size // chunk_size)) if total_size else 1
+    required_bytes = (
+        total_size
+        + len(header.pack())
+        + frame_overhead * estimated_chunks
+        + frame_overhead
+        + 512  # metadata plaintext margin
+        + FOOTER_LEN
+    )
+    check_disk_space(output_path, required_bytes)
 
     with atomic_writer(output_path) as out, input_path.open("rb") as inp:
         out.write(header.pack())

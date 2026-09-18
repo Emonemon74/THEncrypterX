@@ -214,6 +214,10 @@ an 8-core machine.
 - Parallel workers (`--workers`) only pipeline chunk-level AEAD calls, not
   the Argon2id key derivation itself (a fixed cost per operation) or disk
   I/O beyond the OS's own buffering
+- No resumable encryption/decryption - an interrupted operation on a huge
+  file never leaves partial output (all-or-nothing by design), but
+  restarting means starting over, not resuming (see
+  `docs/architecture.md#large-file-handling`)
 - No post-quantum primitives
 - No multi-recipient / key-sharing support
 

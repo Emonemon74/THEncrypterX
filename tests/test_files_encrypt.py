@@ -83,6 +83,27 @@ def test_does_not_touch_output_if_input_missing(tmp_path: Path) -> None:
     assert list(tmp_path.iterdir()) == []
 
 
+def test_insufficient_disk_space_fails_before_writing_anything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import shutil as shutil_module
+
+    from app.core.errors import InsufficientSpaceError
+
+    src = tmp_path / "in.bin"
+    src.write_bytes(b"some data")
+    dest = tmp_path / "out.thex"
+
+    fake_usage = shutil_module.disk_usage(tmp_path)._replace(free=0)
+    monkeypatch.setattr(shutil_module, "disk_usage", lambda _path: fake_usage)
+
+    with pytest.raises(InsufficientSpaceError):
+        encrypt_file(src, dest, "pw", argon2_params=CHEAP)
+
+    assert not dest.exists()
+    assert list(tmp_path.iterdir()) == [src]  # no temp file left behind either
+
+
 # --- round trip -----------------------------------------------------------------
 
 

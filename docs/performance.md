@@ -73,9 +73,40 @@ Parallel workers pipeline chunk-level AEAD calls only - not the Argon2id
 key derivation itself (a fixed cost per operation, ~0.15s at production
 parameters), and not disk I/O beyond what the OS already buffers.
 
+## Large files (4 GB, roadmap Phase 8)
+
+Single run (not median-of-3, unlike the table above - a 4 GB file takes
+minutes per run, so this is a spot-check, not the same statistical rigor),
+production Argon2id parameters, same 8-core Apple Silicon machine, default
+1 MiB chunks, `workers=1`:
+
+| AEAD | Encrypt (MB/s) | Decrypt (MB/s) | Encrypt peak RSS (MB) | Decrypt peak RSS (MB) |
+|---|---:|---:|---:|---:|
+| xchacha20-poly1305 | 50.0 | 49.8 | 279.8 | 278.3 |
+| aes-256-gcm | 205.7 | 179.2 | 273.8 | 275.7 |
+
+Two real findings, reported as measured rather than smoothed over:
+
+- **Peak memory stays flat at 4 GB just like it did at 1 GB** (~275-280 MB,
+  the same range the 10 MB-1024 MB table above shows) - the clearest
+  confirmation that streaming chunked I/O genuinely doesn't scale memory
+  with file size, at the size where a naive whole-file-in-memory
+  implementation would need 4+ GB of RAM to do the same job.
+- **AES-256-GCM's throughput dropped substantially at this size** (205/179
+  MB/s here vs. 487/354 MB/s at 1024 MB) while XChaCha20-Poly1305's stayed
+  essentially flat (50 MB/s vs. 48.7 MB/s). This was not re-run to smooth
+  out - it's one real data point, not confirmed against a second run, so
+  treat the *direction* (AES-GCM's advantage narrows a lot at multi-GB
+  sizes on this machine) as more trustworthy than the exact numbers.
+  Plausible causes not yet isolated: sustained-write thermal/power
+  throttling over a 20-80 second run (this machine is a laptop), or disk
+  I/O becoming the bottleneck once AES-GCM's CPU cost drops low enough for
+  I/O to dominate instead. Re-running with median-of-3 at this size and
+  watching CPU frequency/I/O wait during the run would confirm which.
+
 ## What is not yet benchmarked
 
-- Files below 10 MB or above 1 GB
+- Files above 4 GB
 - Non-Apple-Silicon hardware (no AES-NI comparison point has been run on
   x86 for this project; the ~10x XChaCha20/AES-GCM gap should hold
   directionally on any hardware with AES-NI, but has not been measured
@@ -83,6 +114,11 @@ parameters), and not disk I/O beyond what the OS already buffers.
 - `--workers` combined with AES-256-GCM (only measured with the default
   XChaCha20-Poly1305)
 - Cold-start vs. warm-cache disk I/O effects on very large files
+- Median-of-3 confirmation of the AES-256-GCM throughput drop noted above
 
-These are reasonable follow-ups before adding resumable/large-file support
-(see [`docs/ROADMAP.md`](ROADMAP.md), Phase 8).
+True resumable encryption/decryption (continuing an interrupted operation
+on a huge file without restarting from scratch) is intentionally not
+implemented - see "What large-file support means today" in
+[`docs/architecture.md`](architecture.md#large-file-handling) for what is
+and isn't guaranteed, and [`docs/ROADMAP.md`](ROADMAP.md) Phase 7 for why
+that's deliberately deferred rather than half-built.

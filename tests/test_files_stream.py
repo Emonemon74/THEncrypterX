@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from app.files.stream import atomic_writer, iter_chunks
+from app.core.errors import InsufficientSpaceError
+from app.files.stream import atomic_writer, check_disk_space, iter_chunks
 
 # --- iter_chunks --------------------------------------------------------------
 
@@ -148,3 +149,24 @@ def test_temp_file_created_with_owner_only_permissions(tmp_path: Path) -> None:
         seen_mode["mode"] = mode
 
     assert seen_mode["mode"] == 0o600
+
+
+# --- check_disk_space ---------------------------------------------------------
+
+
+def test_check_disk_space_passes_for_a_tiny_requirement(tmp_path: Path) -> None:
+    check_disk_space(tmp_path / "out.bin", required_bytes=1)  # does not raise
+
+
+def test_check_disk_space_rejects_an_impossible_requirement(tmp_path: Path) -> None:
+    with pytest.raises(InsufficientSpaceError, match="not enough free space"):
+        check_disk_space(tmp_path / "out.bin", required_bytes=2**62)
+
+
+def test_check_disk_space_checks_the_parent_directory(tmp_path: Path) -> None:
+    """The destination file need not exist yet - only its parent directory
+    does (it's where atomic_writer's temp file actually lands)."""
+    dest = tmp_path / "does-not-exist-yet" / "out.bin"
+    (tmp_path / "does-not-exist-yet").mkdir()
+
+    check_disk_space(dest, required_bytes=1)  # does not raise

@@ -11,16 +11,22 @@ things halfway through*:
     only makes it visible under its real name if the whole operation
     succeeded, so a crash or an exception never leaves a half-written file
     where the real output is expected.
+
+  - `check_disk_space` is a fast preflight check for large files: fail in
+    milliseconds instead of partway through writing several gigabytes.
 """
 
 from __future__ import annotations
 
 import contextlib
 import os
+import shutil
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import BinaryIO
+
+from app.core.errors import InsufficientSpaceError
 
 # One (chunk_bytes, is_final) pair per chunk.
 ChunkResult = tuple[bytes, bool]
@@ -93,3 +99,23 @@ def atomic_writer(
     else:
         if must_not_exist:
             tmp_path.unlink(missing_ok=True)
+
+
+def check_disk_space(destination: str | os.PathLike[str], required_bytes: int) -> None:
+    """Fail fast if `destination`'s filesystem clearly doesn't have room.
+
+    A courtesy check, not a guarantee: `shutil.disk_usage` is a snapshot -
+    another process can consume the free space between this check and the
+    real write, and atomic_writer's own exception handling already cleans
+    up safely on a genuine ENOSPC failure regardless of this check running
+    first. What this buys is failing in milliseconds instead of partway
+    through writing a multi-gigabyte file, which is the difference that
+    actually matters at large-file sizes: discovering "not enough space"
+    the slow way can mean minutes of wasted I/O for the same outcome.
+    """
+    free = shutil.disk_usage(Path(destination).parent).free
+    if free < required_bytes:
+        raise InsufficientSpaceError(
+            f"not enough free space at {Path(destination).parent}: "
+            f"need ~{required_bytes} bytes, {free} available"
+        )

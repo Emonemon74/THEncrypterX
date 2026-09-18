@@ -50,3 +50,12 @@ class IntegrityError(ThexError):
 
 class CancelledError(ThexError):
     """The operation was cancelled by the caller before completion."""
+
+
+class InsufficientSpaceError(ThexError):
+    """The destination filesystem clearly doesn't have room for the output.
+
+    A courtesy check (app.files.stream.check_disk_space), not a guarantee -
+    see that function's docstring for why it exists alongside, not instead
+    of, atomic_writer's own safe cleanup on a real ENOSPC failure.
+    """

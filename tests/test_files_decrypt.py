@@ -104,6 +104,27 @@ def test_progress_callback_reaches_original_size(tmp_path: Path) -> None:
     assert calls[-1] == (len(data), len(data))
 
 
+def test_insufficient_disk_space_fails_before_writing_anything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import shutil as shutil_module
+
+    from app.core.errors import InsufficientSpaceError
+
+    src = tmp_path / "in.bin"
+    src.write_bytes(b"secret contents")
+    enc = tmp_path / "out.thex"
+    dec = tmp_path / "dec.bin"
+    encrypt_file(src, enc, "pw", argon2_params=CHEAP)
+
+    fake_usage = shutil_module.disk_usage(tmp_path)._replace(free=0)
+    monkeypatch.setattr(shutil_module, "disk_usage", lambda _path: fake_usage)
+
+    with pytest.raises(InsufficientSpaceError):
+        decrypt_file(enc, dec, "pw")
+    assert not dec.exists()
+
+
 # --- fail-closed: wrong password / tampering -----------------------------------
 
 

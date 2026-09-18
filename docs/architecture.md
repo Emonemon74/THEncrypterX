@@ -148,6 +148,44 @@ worker-count-agnostic: a file encrypted with `workers=8` decrypts correctly
 with `workers=1` and vice versa, since nothing about the on-disk format
 depends on how many threads produced or consume it.
 
+## Large-file handling
+
+Roadmap Phase 8's goals - bounded memory, cancellation, accurate progress -
+were mostly already true of this architecture before Phase 8 was explicitly
+worked on, as a consequence of the streaming design rather than large-file-
+specific work:
+
+- **Bounded memory**: `iter_chunks`' one-chunk read-ahead (`app/files/stream.py`)
+  means peak memory doesn't scale with file size - measured flat at
+  ~275-280 MB from 10 MB up through 4 GB inputs (`docs/performance.md`,
+  "Large files"), not the multi-gigabyte footprint a whole-file-in-memory
+  implementation would need at that size.
+- **Cancellation**: `CancellationToken.raise_if_cancelled()` is checked
+  between every chunk (`app/core/progress.py`), so a cancelled multi-hour
+  job on a huge file stops within one chunk's processing time, not at the
+  end.
+- **Progress reporting**: already reports real bytes processed against the
+  real total after every chunk, accurate regardless of file size.
+- **Disk-space preflight**: `app.files.stream.check_disk_space` fails in
+  milliseconds if the destination filesystem clearly doesn't have room,
+  rather than discovering the same failure the slow way partway through
+  writing several gigabytes. A courtesy check, not the actual safety
+  guarantee - see its docstring.
+
+**What is deliberately not implemented: resumability.** Encrypt and decrypt
+are all-or-nothing by design (`atomic_writer`'s temp-file-then-publish
+guarantee, `docs/development.md`'s "writes are atomic" invariant) - an
+interrupted operation on a huge file leaves the destination completely
+untouched, never a partial or corrupted file, but restarting means starting
+over from the beginning, not resuming from where it left off. The roadmap's
+own Phase 7 spec explicitly warns against building this the easy-but-wrong
+way ("do not implement this by simply appending data blindly") and
+recommends treating genuine crash-safe resumability as a separate,
+deliberately-deferred design effort - a real resumable format needs its own
+chunk-manifest/partial-container representation, not a bolt-on to the
+existing all-or-nothing write path. See `docs/ROADMAP.md` Phase 7 for the
+full requirements list if/when that gets built.
+
 ## Threading model (GUI only)
 
 ```text

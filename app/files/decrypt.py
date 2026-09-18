@@ -32,7 +32,7 @@ from app.crypto.cipher import nonce_size, open_, tag_size
 from app.crypto.kdf import derive_master_key, derive_master_key_from_keyfile
 from app.crypto.keys import derive_subkeys
 from app.files.encrypt import DEFAULT_WORKERS, ProgressCallback
-from app.files.stream import atomic_writer
+from app.files.stream import atomic_writer, check_disk_space
 from app.format.constants import (
     KDF_ID_ARGON2ID,
     KDF_ID_KEYFILE,
@@ -257,6 +257,12 @@ def decrypt_file(
 
         inp.seek(chunks_start)
         max_chunk_ct_len = header.chunk_size + tag_len
+
+        # Fail in milliseconds, not partway through writing a multi-gigabyte
+        # file - see app.files.stream.check_disk_space. Exact, unlike
+        # encrypt_file's estimate: decrypted plaintext is exactly
+        # metadata.original_size, no framing overhead to guess at.
+        check_disk_space(resolved_output, metadata.original_size)
 
         with atomic_writer(resolved_output, must_not_exist=must_not_exist) as out:
             if workers <= 1:

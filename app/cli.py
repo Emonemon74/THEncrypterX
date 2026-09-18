@@ -26,6 +26,7 @@ from app.benchmark import MiB, machine_info_lines, run_benchmark
 from app.core.errors import (
     CancelledError,
     FormatError,
+    InsufficientSpaceError,
     ThexError,
     UnsupportedAlgorithmError,
     UnsupportedVersionError,
@@ -66,6 +67,8 @@ def _exit_code_for(exc: BaseException) -> int:
         return EXIT_FORMAT_ERROR
     if isinstance(exc, CancelledError):
         return EXIT_CANCELLED
+    if isinstance(exc, InsufficientSpaceError):
+        return EXIT_UNEXPECTED
     if isinstance(exc, ThexError):
         return EXIT_FORMAT_ERROR
     return EXIT_UNEXPECTED

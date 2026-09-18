@@ -49,6 +49,25 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it). See `docs/threat-model.md` for what a key file changes about the
   threat model versus a password, including why it's safe to reuse one key
   file across many files. 35 new tests.
+- `app.files.stream.check_disk_space`: encrypt/decrypt now fail in
+  milliseconds with a clear `InsufficientSpaceError` if the destination
+  filesystem obviously doesn't have room, rather than discovering the same
+  failure the slow way partway through writing several gigabytes. A
+  courtesy preflight check, not a replacement for `atomic_writer`'s
+  existing safe cleanup on a genuine ENOSPC failure. 8 new tests.
+- Real large-file verification (roadmap Phase 8): encrypted/decrypted a
+  4 GB file with production Argon2id parameters and confirmed peak memory
+  stays flat (~275-280 MB, same range as the 10 MB-1024 MB numbers already
+  in `docs/performance.md`) rather than scaling with file size - most of
+  Phase 8's goals (bounded memory, cancellation, accurate progress) turned
+  out to already hold as a consequence of the existing streaming design.
+  Also surfaced a real, reported-as-measured finding: AES-256-GCM's
+  throughput advantage over XChaCha20-Poly1305 narrows substantially at
+  this size on this machine (not yet root-caused - see
+  `docs/performance.md`, "Large files"). New `docs/architecture.md`
+  "Large-file handling" section documents what is and isn't guaranteed,
+  including that true resumability is deliberately not implemented (see
+  `docs/ROADMAP.md` Phase 7).
 
 ### Security
 - Fixed a denial-of-service bug found by the existing bit-flip property
