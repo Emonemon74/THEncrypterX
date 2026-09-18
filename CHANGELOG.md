@@ -9,6 +9,17 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `docs/ROADMAP.md` - a prioritized improvement roadmap for post-v1.0 work
   (security engineering, distribution, advanced file handling)
 - `SECURITY.md`, `CHANGELOG.md`, `CONTRIBUTING.md`
+- `docs/cryptography.md`, `docs/security.md`, `docs/performance.md`,
+  `docs/development.md`
+
+### Fixed
+- Closed a TOCTOU race in `decrypt_file(..., output_path=None)`: the
+  auto-derived output path's "refuse to overwrite" check could be beaten by
+  something else creating that path mid-decryption, which the old
+  `os.replace`-based publish would then have silently clobbered.
+  `atomic_writer` gained a `must_not_exist=True` mode (publishes via
+  `os.link`, which atomically fails if the destination exists) to close the
+  window at the filesystem level.
 
 ## [1.0.0] - tagged `v1.0`
 

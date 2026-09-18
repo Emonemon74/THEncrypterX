@@ -49,12 +49,31 @@ guarantees. For the attacker model and what is/isn't protected, see
   is used to size a read or allocation (`app/format/header.py`,
   `app/format/container.py`; see `tests/test_header.py::test_random_garbage_never_crashes`
   and the Hypothesis-based fuzzing in `tests/test_properties.py`).
-- **Not yet reviewed**: symlink handling on the output path (if the target
-  path is a symlink, THEncrypterX currently does not special-case it -
-  `os.replace` follows normal OS symlink semantics), and behavior under
-  disk-space exhaustion mid-write. Both are tracked in
-  [`docs/ROADMAP.md`](ROADMAP.md) (Phase 14) as review items, not yet
-  confirmed safe or unsafe by a dedicated test.
+- **Fixed by this review: a TOCTOU race on the auto-derived decrypt output
+  path.** `decrypt_file(..., output_path=None)` takes the output filename
+  from authenticated metadata and was checking `resolved_output.exists()`
+  once, before decryption started - on a large file, something else could
+  create that path in the window between the check and the eventual write,
+  and the old `os.replace`-based publish would have silently clobbered it
+  anyway, defeating the documented "refuses to overwrite" guarantee.
+  `atomic_writer` now takes `must_not_exist=True` for this path
+  (`app/files/stream.py`), which publishes via `os.link` instead of
+  `os.replace` - `os.link` atomically fails with `FileExistsError` if the
+  destination exists, closing the race at the filesystem level rather than
+  with a separate check. Covered by
+  `tests/test_files_stream.py::test_must_not_exist_raises_and_leaves_no_tmp_file_on_race`.
+  An explicit `-o`/`output_path` is unaffected and still always overwrites,
+  matching `encrypt_file`'s existing semantics.
+- **Reviewed, found not to be an issue: symlinked output paths.**
+  `os.replace`/`os.link`'s destination argument replaces the directory
+  entry itself rather than following it, on both POSIX and Windows - so a
+  destination that is a symlink gets replaced as a symlink, it does not
+  cause the write to land at whatever the symlink points to.
+- **Not yet reviewed**: behavior under disk-space exhaustion mid-write
+  (temp file write fails partway - the exception path should still clean up
+  the temp file via the existing `except BaseException` handler, but this
+  hasn't been exercised by a dedicated test that simulates `ENOSPC`).
+  Tracked in [`docs/ROADMAP.md`](ROADMAP.md) (Phase 14).
 
 ## Memory
 

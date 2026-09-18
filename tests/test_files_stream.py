@@ -118,6 +118,26 @@ def test_failed_write_does_not_touch_existing_destination(tmp_path: Path) -> Non
     assert dest.read_bytes() == b"untouched"
 
 
+def test_must_not_exist_publishes_when_destination_absent(tmp_path: Path) -> None:
+    dest = tmp_path / "out.bin"
+    with atomic_writer(dest, must_not_exist=True) as f:
+        f.write(b"content")
+    assert dest.read_bytes() == b"content"
+
+
+def test_must_not_exist_raises_and_leaves_no_tmp_file_on_race(tmp_path: Path) -> None:
+    """Simulates the TOCTOU window a caller-side `dest.exists()` check can't close:
+    something else creates `dest` after a caller's own check passed, but before
+    the write finishes. must_not_exist=True must still refuse to clobber it.
+    """
+    dest = tmp_path / "out.bin"
+    with pytest.raises(FileExistsError), atomic_writer(dest, must_not_exist=True) as f:
+        f.write(b"content")
+        dest.write_bytes(b"raced in by someone else")
+    assert dest.read_bytes() == b"raced in by someone else"
+    assert list(tmp_path.iterdir()) == [dest]
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file mode bits")
 def test_temp_file_created_with_owner_only_permissions(tmp_path: Path) -> None:
     dest = tmp_path / "out.bin"

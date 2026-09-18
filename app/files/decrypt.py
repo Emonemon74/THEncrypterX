@@ -182,8 +182,14 @@ def decrypt_file(
             raise WrongPasswordError("wrong password or corrupted file") from exc
         metadata = deserialize(meta_bytes)
 
+        must_not_exist = output_path is None
         if output_path is None:
             resolved_output = input_path.parent / metadata.original_name
+            # Fast, friendly failure for the common case. This check alone
+            # would be a TOCTOU race for a large file (something else could
+            # create resolved_output while decryption is still running) -
+            # atomic_writer's must_not_exist=True below is what actually
+            # closes that window at publish time.
             if resolved_output.exists():
                 raise FileExistsError(
                     f"refusing to overwrite existing file {resolved_output} "
@@ -207,7 +213,7 @@ def decrypt_file(
         inp.seek(chunks_start)
         max_chunk_ct_len = header.chunk_size + tag_len
 
-        with atomic_writer(resolved_output) as out:
+        with atomic_writer(resolved_output, must_not_exist=must_not_exist) as out:
             if workers <= 1:
                 _decrypt_chunks_sequential(
                     inp,

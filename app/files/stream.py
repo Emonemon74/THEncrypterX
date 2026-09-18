@@ -52,14 +52,26 @@ def iter_chunks(stream: BinaryIO, chunk_size: int) -> Iterator[ChunkResult]:
 
 
 @contextlib.contextmanager
-def atomic_writer(destination: str | os.PathLike[str]) -> Iterator[BinaryIO]:
+def atomic_writer(
+    destination: str | os.PathLike[str], *, must_not_exist: bool = False
+) -> Iterator[BinaryIO]:
     """Write to a private temp file next to `destination`; publish it atomically.
 
-    On success: flush, fsync, then os.replace the temp file onto `destination`
+    On success: flush, fsync, then publish the temp file onto `destination`
     (atomic on the same filesystem - the destination either has the old
     content or the fully-written new content, never a partial file).
 
-    On any exception raised inside the `with` block: the temp file is
+    `must_not_exist=True` publishes via `os.link` (hard link) followed by
+    unlinking the temp file, instead of `os.replace`. `os.link` raises
+    `FileExistsError` if `destination` already exists, and does so
+    atomically at the filesystem level - unlike checking `destination.exists()`
+    before writing, this closes the TOCTOU window where another process
+    could create `destination` while a large file is still being
+    written, which would otherwise let a caller's own "don't overwrite"
+    check pass and then still get silently clobbered at publish time.
+
+    On any exception raised inside the `with` block, or if publishing itself
+    fails (including the `must_not_exist` case above): the temp file is
     unlinked and the exception propagates. `destination` is left untouched.
     """
     dest = Path(destination)
@@ -71,7 +83,13 @@ def atomic_writer(destination: str | os.PathLike[str]) -> Iterator[BinaryIO]:
             yield f
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp_path, dest)
+        if must_not_exist:
+            os.link(tmp_path, dest)
+        else:
+            os.replace(tmp_path, dest)
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
+    else:
+        if must_not_exist:
+            tmp_path.unlink(missing_ok=True)
